@@ -3,1371 +3,1865 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SSD1306 Simulator & Code Generator - Advanced</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <title>Pico OLED UI Editor</title>
     <style>
-        :root {
-            --grid-color: rgba(0, 150, 255, 0.2);
-            --grid-size: 8px; /* Default grid size in simulator pixels */
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
         }
-        body { font-family: 'Inter', sans-serif; overscroll-behavior: none; }
-        #simulator-area { position: relative; overflow: hidden; background-color: #555; /* Area around canvas */ }
-        #canvas-container {
-            position: relative;
-            border: 1px solid #777;
-            transform-origin: top left; /* For zooming */
-            background-color: #000; /* Ensure container background is black */
-            overflow: hidden; /* Clip elements outside canvas bounds */
+        #editor-container {
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+            width: 100%;
+            max-width: 1200px;
+            margin-bottom: 20px;
         }
-        #ssd1306-canvas {
-            display: block; /* Remove extra space below canvas */
-            background-color: #000;
+        #canvas-area {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #display-canvas {
+            border: 1px solid #333;
+            background-color: #000; /* Simulate OLED black background */
+            image-rendering: optimizePixed; /* Keep pixels sharp */
             image-rendering: pixelated;
-            cursor: default;
-            touch-action: none;
-            position: absolute; /* Needed for grid overlay */
-            top: 0; left: 0;
+            width: 512px; /* Scaled up for visibility (128 * 4) */
+            height: 256px; /* Scaled up for visibility (64 * 4) */
+            cursor: crosshair;
         }
-        #grid-overlay {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            pointer-events: none;
-            background-image:
-                linear-gradient(to right, var(--grid-color) 1px, transparent 1px),
-                linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px);
-            background-size: calc(var(--grid-size) * var(--canvas-scale-x, 4)) calc(var(--grid-size) * var(--canvas-scale-y, 4));
-            display: none; /* Hidden by default */
-            z-index: 5; /* Below selection box */
+        #mouse-coords {
+            margin-top: 5px;
+            font-size: 0.9em;
+            color: #555;
         }
-        #canvas-container.show-grid #grid-overlay { display: block; }
+        #controls-area {
+            width: 250px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .tool-bar, .properties-panel, .animation-panel, .sprite-editor-panel {
+            background-color: #fff;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .tool-bar h3, .properties-panel h3, .animation-panel h3, .sprite-editor-panel h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .tool-bar button, .properties-panel button, .animation-panel button, #sprite-editor button {
+            margin: 2px;
+            padding: 8px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            background-color: #eee;
+            border-radius: 3px;
+        }
+        .tool-bar button.active {
+            background-color: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        .properties-panel div, .animation-panel div, #sprite-editor label {
+            margin-bottom: 10px;
+        }
+        .properties-panel input[type="number"],
+        .properties-panel input[type="text"],
+        .properties-panel select,
+        .animation-panel input[type="number"] {
+            width: calc(100% - 12px);
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        .properties-panel input[type="checkbox"] {
+            margin-right: 5px;
+        }
 
-        .selected-outline { /* ... (same) ... */
-            position: absolute; border: 1px dashed rgba(0, 150, 255, 0.7);
-            pointer-events: none; box-sizing: border-box; z-index: 10;
+        #code-output-area {
+            width: 100%;
+            max-width: 1200px;
+            margin-top: 20px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
         }
-        .resize-handle { /* ... (same) ... */
-            position: absolute; width: 8px; height: 8px; background-color: rgba(0, 150, 255, 0.7);
-            border: 1px solid white; border-radius: 1px; cursor: pointer; pointer-events: auto; z-index: 11;
+        #generated-code {
+            width: calc(100% - 20px);
+            height: 300px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            font-family: monospace;
+            white-space: pre;
+            overflow: auto;
+            background-color: #f9f9f9;
         }
-        .resize-handle.tl { top: -4px; left: -4px; cursor: nwse-resize; }
-        .resize-handle.tr { top: -4px; right: -4px; cursor: nesw-resize; }
-        .resize-handle.bl { bottom: -4px; left: -4px; cursor: nesw-resize; }
-        .resize-handle.br { bottom: -4px; right: -4px; cursor: nwse-resize; }
 
-        /* Visual indicators for locked/hidden elements */
-        .element-overlay {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; /* Allow interaction with element below */
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.5rem; /* Adjust as needed */
-            z-index: 1; /* Above element drawing, below selection */
+        /* Sprite Editor Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+            padding-top: 60px;
         }
-        .locked-overlay { background-color: rgba(100, 100, 100, 0.3); color: rgba(255, 255, 255, 0.5); }
-        .hidden-overlay { background-color: rgba(50, 50, 50, 0.5); color: rgba(200, 200, 200, 0.4); }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 500px;
+            border-radius: 8px;
+        }
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .close:hover, .close:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        #sprite-editor-grid {
+            display: grid;
+            border: 1px solid #ccc;
+            margin: 10px auto;
+        }
+        #sprite-editor-grid .pixel {
+            width: 15px;
+            height: 15px;
+            border: 1px solid #eee;
+            background-color: white; /* White represents off */
+        }
+        #sprite-editor-grid .pixel.on {
+            background-color: black; /* Black represents on */
+        }
+        #sprite-editor-controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 15px;
+        }
+         .grid-option {
+             margin-bottom: 10px;
+         }
+         .grid-option input {
+             margin-left: 5px;
+         }
+         .element-list-item {
+             padding: 5px;
+             border-bottom: 1px solid #eee;
+             cursor: pointer;
+         }
+        .element-list-item.selected {
+            background-color: #e0f2ff;
+        }
+        #element-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 3px;
+        }
 
-        .modal { /* ... (same) ... */
-            display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%;
-            overflow: auto; background-color: rgba(0,0,0,0.4);
-        }
-        .modal-content { /* ... (same) ... */
-             background-color: #fefefe; margin: 10% auto; padding: 20px;
-            border: 1px solid #888; width: 80%; max-width: 400px; border-radius: 8px;
-        }
-        .close-button { /* ... (same) ... */
-            color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;
-        }
-        .close-button:hover, .close-button:focus { color: black; text-decoration: none; }
-
-        #micropython-code { /* ... (same) ... */
-             font-family: monospace; font-size: 0.8rem; white-space: pre; overflow-x: auto;
-             background-color: #2d2d2d; color: #cccccc; border: 1px solid #444;
-             border-radius: 4px; padding: 10px; min-height: 150px; resize: vertical;
-        }
-        .shape-properties { padding-top: 5px; padding-bottom: 5px; }
-        #coords-display { /* ... (same) ... */
-            font-family: monospace; font-size: 0.9rem; color: #333; background-color: rgba(255, 255, 255, 0.7);
-            padding: 2px 8px; border-radius: 4px; border: 1px solid #ccc; margin-top: 5px;
-        }
-        #prop-points { font-family: monospace; font-size: 0.8rem; min-height: 60px; }
-        button { transition: background-color 0.15s ease-in-out, opacity 0.15s ease-in-out; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        #animation-controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
-        /* Style for property header icons */
-        .prop-header-icon { cursor: pointer; margin-left: 5px; color: #666; }
-        .prop-header-icon:hover { color: #000; }
-        .prop-header-icon.active { color: #007bff; }
-        /* Style for toolbar buttons */
-        .toolbar-btn {
-             background-color: #e2e8f0; border: 1px solid #cbd5e1; padding: 4px 8px; border-radius: 4px;
-             font-size: 0.9rem; display: inline-flex; align-items: center; justify-content: center;
-        }
-        .toolbar-btn:hover { background-color: #cbd5e1; }
-        .toolbar-btn:disabled { background-color: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }
-        .toolbar-btn i { margin-right: 4px; } /* Space between icon and text */
     </style>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
-<body class="bg-gray-100 flex flex-col md:flex-row h-screen overflow-hidden">
+<body>
 
-    <div class="w-full md:w-80 bg-white p-4 space-y-4 overflow-y-auto shadow-lg flex flex-col"> <h2 class="text-xl font-semibold text-gray-700">Controls</h2>
+    <h1>Pico OLED UI Editor (128x64)</h1>
 
-        <div class="flex flex-wrap gap-2 border-b pb-3 mb-3 border-gray-200">
-             <button id="save-btn" title="Save Design (Ctrl+S)" class="toolbar-btn"><i class="fas fa-save"></i> Save</button>
-             <button id="load-btn" title="Load Design (Ctrl+O)" class="toolbar-btn"><i class="fas fa-folder-open"></i> Load</button>
-             <button id="undo-btn" title="Undo (Ctrl+Z)" class="toolbar-btn" disabled><i class="fas fa-undo"></i> Undo</button>
-             <button id="redo-btn" title="Redo (Ctrl+Y)" class="toolbar-btn" disabled><i class="fas fa-redo"></i> Redo</button>
-             <button id="copy-btn" title="Copy (Ctrl+C)" class="toolbar-btn" disabled><i class="fas fa-copy"></i> Copy</button>
-             <button id="paste-btn" title="Paste (Ctrl+V)" class="toolbar-btn" disabled><i class="fas fa-paste"></i> Paste</button>
-        </div>
-
-        <div class="space-y-2 border-b pb-4 border-gray-200">
-            <h3 class="text-lg font-medium text-gray-600">Add Element</h3>
-            <div class="flex space-x-2">
-                <select id="add-element-type" class="flex-grow border border-gray-300 rounded px-2 py-1 text-sm">
-                    <option value="text">Text</option>
-                    <option value="rectangle">Rectangle</option>
-                    <option value="line">Line</option>
-                    <option value="circle">Circle</option>
-                    <option value="triangle">Triangle</option>
-                    <option value="ellipse">Ellipse</option>
-                    <option value="polygon">Polygon</option>
-                    <option value="round_rect">Round Rectangle</option>
-                    <option value="icon">Icon</option>
-                </select>
-                <button id="add-element-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded text-sm">Add</button>
+    <div id="editor-container">
+        <div id="canvas-area">
+            <canvas id="display-canvas" width="128" height="64"></canvas>
+            <div id="mouse-coords">(0, 0)</div>
+            <div class="grid-option">
+                <label for="show-grid">Show Grid</label>
+                <input type="checkbox" id="show-grid">
+                <label for="snap-grid">Snap to Grid</label>
+                <input type="checkbox" id="snap-grid">
             </div>
         </div>
 
-        <div class="space-y-2 border-b pb-4 border-gray-200">
-             <h3 class="text-lg font-medium text-gray-600">Layers</h3>
-             <div class="grid grid-cols-2 gap-2">
-                 <button id="bring-forward-btn" title="Bring Forward" class="toolbar-btn" disabled><i class="fas fa-arrow-up"></i> Forward</button>
-                 <button id="send-backward-btn" title="Send Backward" class="toolbar-btn" disabled><i class="fas fa-arrow-down"></i> Backward</button>
-                 <button id="bring-front-btn" title="Bring to Front" class="toolbar-btn" disabled><i class="fas fa-angle-double-up"></i> Front</button>
-                 <button id="send-back-btn" title="Send to Back" class="toolbar-btn" disabled><i class="fas fa-angle-double-down"></i> Back</button>
-             </div>
-        </div>
+        <div id="controls-area">
+            <div class="tool-bar">
+                <h3>Tools</h3>
+                <button id="tool-select" class="active">Select</button>
+                <button id="tool-pixel">Pixel</button>
+                <button id="tool-line">Line</button>
+                <button id="tool-rect">Rect</button>
+                <button id="tool-filled-rect">Filled Rect</button>
+                <button id="tool-circle">Circle</button>
+                <button id="tool-filled-circle">Filled Circle</button>
+                <button id="tool-text">Text</button>
+                <button id="tool-sprite">Sprite</button>
+                 <button id="tool-eraser">Eraser</button>
+            </div>
 
-         <div id="properties-panel" class="space-y-1 hidden flex-grow">
-             <div class="flex justify-between items-center border-b pb-1 mb-2 border-gray-200">
-                 <h3 class="text-lg font-medium text-gray-600">Properties</h3>
-                 <div>
-                     <i id="prop-visible-toggle" title="Toggle Visibility" class="fas fa-eye prop-header-icon"></i>
-                     <i id="prop-locked-toggle" title="Toggle Lock" class="fas fa-lock prop-header-icon"></i>
+             <div class="properties-panel">
+                <h3>Element Properties</h3>
+                 <div id="no-element-selected">Select an element to see properties.</div>
+                <div id="selected-element-properties" style="display: none;">
+                    <div>
+                        <label for="prop-type">Type:</label>
+                        <span id="prop-type"></span>
+                    </div>
+                     <div>
+                        <label for="prop-x">X:</label>
+                        <input type="number" id="prop-x" value="0">
+                    </div>
+                    <div>
+                        <label for="prop-y">Y:</label>
+                        <input type="number" id="prop-y" value="0">
+                    </div>
+                     <div class="prop-text">
+                        <label for="prop-text-content">Text:</label>
+                        <input type="text" id="prop-text-content" value="">
+                     </div>
+                     <div class="prop-size">
+                        <label for="prop-width">Width:</label>
+                        <input type="number" id="prop-width" value="10">
+                    </div>
+                    <div class="prop-size">
+                        <label for="prop-height">Height:</label>
+                        <input type="number" id="prop-height" value="10">
+                    </div>
+                     <div class="prop-radius">
+                        <label for="prop-radius">Radius:</label>
+                        <input type="number" id="prop-radius" value="5">
+                     </div>
+                    <div class="prop-color">
+                         <label for="prop-color">Color:</label>
+                        <select id="prop-color">
+                            <option value="1">On (Black/White)</option>
+                            <option value="0">Off (White/Black)</option>
+                        </select>
+                     </div>
+                    <div class="prop-fill">
+                        <label for="prop-fill">Filled:</label>
+                        <input type="checkbox" id="prop-fill">
+                    </div>
+                     <div class="prop-sprite">
+                         <label>Sprite:</label>
+                         <button id="edit-sprite-button">Edit Sprite Data</button>
+                     </div>
+                     <button id="delete-element-button" style="background-color: #dc3545; color: white; border-color: #dc3545;">Delete Element</button>
+                </div>
+            </div>
+
+            <div class="animation-panel">
+                 <h3>Animation (Preview Only)</h3>
+                <div id="no-anim-element-selected">Select an element to add animation.</div>
+                 <div id="selected-anim-controls" style="display: none;">
+                     <p>Define a simple path animation (start = current pos)</p>
+                     <div>
+                         <label for="anim-end-x">End X:</label>
+                         <input type="number" id="anim-end-x" value="0">
+                     </div>
+                     <div>
+                         <label for="anim-end-y">End Y:</label>
+                         <input type="number" id="anim-end-y" value="0">
+                     </div>
+                     <div>
+                         <label for="anim-steps">Steps:</label>
+                         <input type="number" id="anim-steps" value="50" min="1">
+                     </div>
+                     <button id="add-animation-button">Set Animation</button>
+                     <button id="remove-animation-button" style="background-color: #ffc107; border-color: #ffc107;">Remove Animation</button>
+                     <button id="play-animation-button" style="background-color: #28a745; color: white; border-color: #28a745;">Play Animation</button>
+                     <button id="stop-animation-button" style="background-color: #dc3545; color: white; border-color: #dc3545;">Stop Animation</button>
                  </div>
              </div>
 
-             <div id="text-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="rectangle-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="line-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="circle-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="triangle-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="ellipse-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="polygon-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="round_rect-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="icon-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
-             <div id="animation-properties" class="shape-properties mt-3 pt-3 border-t border-gray-200 space-y-1"> /* ... inputs ... */ </div>
+             <div class="properties-panel">
+                 <h3>Layers</h3>
+                 <div id="element-list">
+                     <!-- Element list will be populated here -->
+                 </div>
+                 <button id="move-up-button">Move Up</button>
+                 <button id="move-down-button">Move Down</button>
+             </div>
 
-             <button id="delete-btn" title="Delete Element (Del/Backspace)" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded mt-4" disabled>Delete Element</button>
-        </div>
-
-        <div class="space-y-2 pt-4 border-t border-gray-200">
-            <h3 class="text-lg font-medium text-gray-600">View</h3>
-            <div class="flex items-center space-x-2">
-                <label for="display-size" class="text-sm font-medium text-gray-500">Size:</label>
-                <select id="display-size" class="flex-grow border border-gray-300 rounded px-2 py-1 text-sm">
-                    <option value="128x64">128 x 64</option>
-                    <option value="128x32">128 x 32</option>
-                    <option value="96x16">96 x 16</option>
-                </select>
+            <div class="tool-bar">
+                <h3>Code</h3>
+                <button id="generate-code-button">Generate MicroPython Code</button>
             </div>
-             <div class="flex items-center space-x-2">
-                 <label class="text-sm font-medium text-gray-500">Zoom:</label>
-                 <button id="zoom-out-btn" class="toolbar-btn w-8">-</button>
-                 <span id="zoom-level" class="text-sm text-gray-600 w-10 text-center">100%</span>
-                 <button id="zoom-in-btn" class="toolbar-btn w-8">+</button>
-             </div>
-             <div class="flex items-center space-x-2">
-                 <input type="checkbox" id="grid-toggle" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-                 <label for="grid-toggle" class="text-sm font-medium text-gray-500">Show Grid</label>
-                 <input type="checkbox" id="snap-toggle" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-                 <label for="snap-toggle" class="text-sm font-medium text-gray-500">Snap to Grid</label>
-             </div>
-        </div>
-
-        <div id="global-animation-controls" class="pt-4 border-t border-gray-200 space-y-2">
-             <h3 class="text-lg font-medium text-gray-600">Animation Preview</h3>
-             <div class="flex space-x-2">
-                <button id="play-btn" title="Play/Pause (P)" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-1 px-3 rounded text-sm"><i class="fas fa-play mr-1"></i>Play</button>
-                <button id="pause-btn" title="Play/Pause (P)" class="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-1 px-3 rounded text-sm" disabled><i class="fas fa-pause mr-1"></i>Pause</button>
-             </div>
-        </div>
-
-        <div class="space-y-2 pt-4 border-t border-gray-200 mt-auto"> <h3 class="text-lg font-medium text-gray-600">Code Generation</h3>
-             <button id="generate-code-btn" class="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded">Generate MicroPython Code</button>
         </div>
     </div>
 
-    <div id="simulator-area" class="flex-1 flex flex-col items-center justify-center p-4 bg-gray-300 relative overflow-y-auto">
-        <div id="canvas-outer-container" class="relative flex-shrink-0">
-             <div id="canvas-container" class="relative">
-                 <canvas id="ssd1306-canvas" width="128" height="64"></canvas>
-                 <div id="grid-overlay"></div>
-                 <div id="selection-box" class="hidden">
-                    <div class="selected-outline"></div>
-                    <div class="resize-handle tl"></div> <div class="resize-handle tr"></div>
-                    <div class="resize-handle bl"></div> <div class="resize-handle br"></div>
-                </div>
-                 <div id="element-overlays"></div>
-             </div>
-        </div>
-        <div id="coords-display" class="absolute bottom-2 left-2 z-20">Coords: (-, -)</div>
-
-         <div class="w-full max-w-4xl mt-4 flex-grow flex flex-col" style="min-height: 150px;">
-            <label for="micropython-code" class="text-sm font-medium text-gray-600 mb-1">Generated MicroPython Code:</label>
-            <textarea id="micropython-code" readonly class="flex-grow w-full"></textarea>
-         </div>
+    <div id="code-output-area">
+        <h2>Generated MicroPython Code</h2>
+        <pre id="generated-code"></pre>
     </div>
 
-    <div id="text-modal" class="modal"> /* ... (same as before) ... */ </div>
-
+    <!-- Sprite Editor Modal -->
+    <div id="spriteEditorModal" class="modal">
+        <div class="modal-content">
+            <span class="close">×</span>
+            <h3>Sprite Editor (<span id="current-sprite-name">New Sprite</span>)</h3>
+            <div>
+                <label for="sprite-width">Width:</label>
+                <input type="number" id="sprite-editor-width" value="8" min="1" max="32">
+                <label for="sprite-height" style="margin-left: 10px;">Height:</label>
+                <input type="number" id="sprite-editor-height" value="8" min="1" max="32">
+                <button id="resize-sprite-grid">Resize Grid</button>
+            </div>
+            <div id="sprite-editor-grid">
+                <!-- Pixel grid will be generated here -->
+            </div>
+            <div id="sprite-editor-controls">
+                <button id="new-sprite-button">New Sprite</button>
+                 <label for="sprite-name">Name:</label>
+                 <input type="text" id="sprite-name" value="new_sprite">
+                <button id="save-sprite-button">Save Sprite</button>
+                <select id="sprite-library-select">
+                    <option value="">-- Load Sprite --</option>
+                </select>
+                 <button id="load-sprite-button">Load Selected</button>
+            </div>
+        </div>
+    </div>
 
     <script>
-        // --- Constants & State ---
-        let SCREEN_WIDTH = 128; // Default, can be changed
-        let SCREEN_HEIGHT = 64; // Default, can be changed
-        const PIXEL_COLOR = '#FFFFFF';
-        let CANVAS_SCALE_X = 4; // Base scale for 1 simulator pixel = 4 screen pixels
-        let CANVAS_SCALE_Y = 4;
-        let currentZoom = 1.0; // Zoom factor applied on top of base scale
-        const GRID_SIZE = 8; // Grid size in simulator pixels
-
-        let elements = [];
-        let selectedElement = null;
-        let isDragging = false;
-        let isResizing = false;
-        let dragStartX, dragStartY;
-        let dragOffsetX, dragOffsetY;
-        let resizeHandleType = null;
-        let animationFrameId = null;
-        let isPlaying = false;
-        let showGrid = false;
-        let snapToGrid = false;
-        let history = []; // For undo/redo
-        let historyIndex = -1; // Pointer to current state in history
-        let copiedElementData = null; // For copy/paste
-
-        // --- Preset Icons ---
-        const presetIcons = { /* ... (Includes battery, arrows, play, pause AND new ones) ... */
-             "battery_full": { width: 24, height: 8, data: [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0] },
-            "battery_mid": { width: 24, height: 8, data: [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0] },
-             "battery_empty": { width: 24, height: 8, data: [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0] },
-            "arrow_up": { width: 8, height: 8, data: [0,0,0,1,1,0,0,0,0,0,1,1,1,1,0,0,0,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0] },
-             "arrow_down": { width: 8, height: 8, data: [0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,0,0,0,1,1,1,1,0,0,0,0,0,1,1,0,0,0] },
-             "arrow_left": { width: 8, height: 8, data: [0,0,0,1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0] },
-            "arrow_right": { width: 8, height: 8, data: [0,0,0,0,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0] },
-            "play": { width: 8, height: 8, data: [0,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,1,0,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0] },
-            "pause": { width: 8, height: 8, data: [0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0] },
-            "wifi": { width: 16, height: 8, data: [0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,1,1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,0,0,1,1,0,0,1,1,0,0,1,0,0,0,1,1,0,1,1,0,0,0,0,1,1,0,1,1,0,1,0,1,1,0,0,1,1,1,1,1,1,0,0,1,1,0,1,0,1,1,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] },
-            "settings": { width: 16, height: 16, data: [0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,0,0,1,1,0,0,1,1,0,0,0,0,0,1,0,0,1,0,1,1,0,1,0,0,1,0,0,0,1,0,0,0,1,1,0,0,1,1,0,0,0,1,0,1,0,0,1,0,0,0,0,0,0,1,0,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,0,0,1,0,0,0,0,0,0,1,0,0,1,1,0,0,1,1,0,1,1,1,1,0,1,0,0,1,1,0,0,0,1,0,0,1,1,0,1,0,0,1,0,0,0,0,0,1,0,0,1,0,0,1,0,1,1,0,1,0,0,1,0,0,0,0,0,1,1,0,0,1,1,0,0,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0] },
-            "checkmark": { width: 8, height: 8, data: [0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,1,0,1,0,0,0,1,1,0,0,1,1,0,1,1,0,0,0,0,1,1,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0] },
-            "cross": { width: 8, height: 8, data: [1,0,0,0,0,0,0,1,0,1,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0,1,0,1,0,0,0,0,0,0,1] }
-        };
-
+        // --- Constants ---
+        const DISPLAY_WIDTH = 128;
+        const DISPLAY_HEIGHT = 64;
+        const SCALE = 4; // For canvas display size
+        const GRID_SIZE = 8; // Grid snap size
 
         // --- DOM Elements ---
-        // (Get elements as before)
-        const canvas = document.getElementById('ssd1306-canvas');
+        const canvas = document.getElementById('display-canvas');
         const ctx = canvas.getContext('2d');
-        const simulatorArea = document.getElementById('simulator-area');
-        const canvasOuterContainer = document.getElementById('canvas-outer-container');
-        const canvasContainer = document.getElementById('canvas-container');
-        const addElementTypeSelect = document.getElementById('add-element-type');
-        const addElementBtn = document.getElementById('add-element-btn');
-        const deleteBtn = document.getElementById('delete-btn');
-        const propertiesPanel = document.getElementById('properties-panel');
-        const selectionBox = document.getElementById('selection-box');
-        const selectionOutline = selectionBox.querySelector('.selected-outline');
-        const resizeHandles = selectionBox.querySelectorAll('.resize-handle');
-        const generateCodeBtn = document.getElementById('generate-code-btn');
-        const codeOutputArea = document.getElementById('micropython-code');
-        const coordsDisplay = document.getElementById('coords-display');
-        const playBtn = document.getElementById('play-btn');
-        const pauseBtn = document.getElementById('pause-btn');
-        const saveBtn = document.getElementById('save-btn');
-        const loadBtn = document.getElementById('load-btn');
-        const undoBtn = document.getElementById('undo-btn');
-        const redoBtn = document.getElementById('redo-btn');
-        const copyBtn = document.getElementById('copy-btn');
-        const pasteBtn = document.getElementById('paste-btn');
-        const bringForwardBtn = document.getElementById('bring-forward-btn');
-        const sendBackwardBtn = document.getElementById('send-backward-btn');
-        const bringFrontBtn = document.getElementById('bring-front-btn');
-        const sendBackBtn = document.getElementById('send-back-btn');
-        const zoomInBtn = document.getElementById('zoom-in-btn');
-        const zoomOutBtn = document.getElementById('zoom-out-btn');
-        const zoomLevelSpan = document.getElementById('zoom-level');
-        const gridToggle = document.getElementById('grid-toggle');
-        const snapToggle = document.getElementById('snap-toggle');
-        const displaySizeSelect = document.getElementById('display-size');
-        const elementOverlaysDiv = document.getElementById('element-overlays');
-        const gridOverlay = document.getElementById('grid-overlay');
+        const mouseCoordsDiv = document.getElementById('mouse-coords');
+        const toolButtons = document.querySelectorAll('.tool-bar button');
+        const propertiesPanel = document.getElementById('selected-element-properties');
+        const noElementSelectedMsg = document.getElementById('no-element-selected');
+        const propTypeSpan = document.getElementById('prop-type');
+        const propXInput = document.getElementById('prop-x');
+        const propYInput = document.getElementById('prop-y');
+        const propTextDiv = document.querySelector('.prop-text');
+        const propTextContentInput = document.getElementById('prop-text-content');
+        const propSizeDivs = document.querySelectorAll('.prop-size');
+        const propWidthInput = document.getElementById('prop-width');
+        const propHeightInput = document.getElementById('prop-height');
+        const propRadiusDiv = document.querySelector('.prop-radius');
+        const propRadiusInput = document.getElementById('prop-radius');
+        const propColorDiv = document.querySelector('.prop-color');
+        const propColorSelect = document.getElementById('prop-color');
+        const propFillDiv = document.querySelector('.prop-fill');
+        const propFillCheckbox = document.getElementById('prop-fill');
+        const propSpriteDiv = document.querySelector('.prop-sprite');
+        const deleteElementButton = document.getElementById('delete-element-button');
+        const generateCodeButton = document.getElementById('generate-code-button');
+        const generatedCodePre = document.getElementById('generated-code');
+        const showGridCheckbox = document.getElementById('show-grid');
+        const snapGridCheckbox = document.getElementById('snap-grid');
+        const elementListDiv = document.getElementById('element-list');
+        const moveUpButton = document.getElementById('move-up-button');
+        const moveDownButton = document.getElementById('move-down-button');
 
-        // Text Modal Elements
-        const textModal = document.getElementById('text-modal');
-        const closeModalBtn = document.getElementById('close-modal-btn');
-        const modalTextInput = document.getElementById('modal-text-input');
-        const modalConfirmBtn = document.getElementById('modal-confirm-btn');
+        // Animation Controls
+        const animPanel = document.querySelector('.animation-panel');
+        const noAnimSelectedMsg = document.getElementById('no-anim-element-selected');
+        const selectedAnimControls = document.getElementById('selected-anim-controls');
+        const animEndXInput = document.getElementById('anim-end-x');
+        const animEndYInput = document.getElementById('anim-end-y');
+        const animStepsInput = document.getElementById('anim-steps');
+        const addAnimationButton = document.getElementById('add-animation-button');
+        const removeAnimationButton = document.getElementById('remove-animation-button');
+        const playAnimationButton = document.getElementById('play-animation-button');
+        const stopAnimationButton = document.getElementById('stop-animation-button');
 
 
-        // --- Element Creation ---
-        function createElement(type, options = {}) {
-            // Add unique ID, locked, visible status to base element
-            const baseElement = {
-                id: options.id ?? (Date.now() + Math.random()), // Use provided ID if loading/pasting
-                type: type,
-                x: options.x ?? 10,
-                y: options.y ?? 10,
-                width: options.width ?? 30,
-                height: options.height ?? 10,
-                color: options.color ?? 1,
-                fill: options.fill ?? false,
-                visible: options.visible ?? true,
-                locked: options.locked ?? false,
-                // Animation properties
-                isAnimating: options.isAnimating ?? false,
-                animTargetX: options.animTargetX ?? null,
-                animTargetY: options.animTargetY ?? null,
-                animSpeed: options.animSpeed ?? 1,
-                draw: function(context) { /* ... default placeholder ... */ }
-            };
+        // Sprite Editor Modal
+        const spriteEditorModal = document.getElementById('spriteEditorModal');
+        const closeModalSpan = document.querySelector('.modal .close');
+        const spriteEditorGridDiv = document.getElementById('sprite-editor-grid');
+        const spriteEditorWidthInput = document.getElementById('sprite-editor-width');
+        const spriteEditorHeightInput = document.getElementById('sprite-editor-height');
+        const resizeSpriteGridButton = document.getElementById('resize-sprite-grid');
+        const newSpriteButton = document.getElementById('new-sprite-button');
+        const saveSpriteButton = document.getElementById('save-sprite-button');
+        const spriteLibrarySelect = document.getElementById('sprite-library-select');
+        const loadSpriteButton = document.getElementById('load-sprite-button');
+        const currentSpriteNameSpan = document.getElementById('current-sprite-name');
+        const spriteNameInput = document.getElementById('sprite-name');
+        const editSpriteButton = document.getElementById('edit-sprite-button');
 
-            // --- Specific Element Types (add locked/visible checks in draw if needed) ---
-             switch(type) {
-                case 'text':
-                    return {
-                        ...baseElement,
-                        text: options.text || 'Text',
-                        width: options.width || (options.text ? options.text.length * 5 : 30),
-                        height: options.height || 8,
-                        draw: function(ctx) {
-                            if (!this.visible) return;
-                            const drawX = this.x ?? baseElement.x; const drawY = this.y ?? baseElement.y;
-                            const drawText = this.text ?? 'Text';
-                            ctx.fillStyle = PIXEL_COLOR; ctx.font = `8px sans-serif`;
-                            ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-                            ctx.fillText(drawText, drawX, drawY);
-                        }
-                    };
-                case 'rectangle':
-                     return {
-                         ...baseElement, fill: options.fill ?? false,
-                        draw: function(ctx) {
-                            if (!this.visible) return;
-                            const drawX = this.x ?? baseElement.x; const drawY = this.y ?? baseElement.y;
-                            const drawW = this.width ?? baseElement.width; const drawH = this.height ?? baseElement.height;
-                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fillRect(drawX, drawY, drawW, drawH); }
-                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.strokeRect(drawX, drawY, drawW, drawH); }
-                        }
-                    };
-                case 'line': {
-                    const x1_l = options.x ?? 5; const y1_l = options.y ?? 5;
-                    const x2_l = options.x2 ?? (x1_l + 30); const y2_l = options.y2 ?? (y1_l + 10);
-                    return {
-                        ...baseElement, x: x1_l, y: y1_l, x2: x2_l, y2: y2_l,
-                        width: Math.abs(x2_l - x1_l), height: Math.abs(y2_l - y1_l),
-                        draw: function(ctx) {
-                            if (!this.visible) return;
-                            ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1;
-                            ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.x2, this.y2); ctx.stroke();
-                        }
-                    };
-                }
-                 case 'circle': {
-                     const cx_c = options.cx ?? 30; const cy_c = options.cy ?? 30; const r_c = options.r ?? 15;
-                    return {
-                        ...baseElement, cx: cx_c, cy: cy_c, r: r_c, fill: options.fill ?? false,
-                        x: cx_c - r_c, y: cy_c - r_c, width: r_c * 2, height: r_c * 2,
-                        draw: function(ctx) {
-                            if (!this.visible) return;
-                            ctx.beginPath(); ctx.arc(this.cx, this.cy, this.r, 0, Math.PI * 2);
-                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fill(); }
-                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.stroke(); }
-                        }
-                    };
-                 }
-                case 'triangle': {
-                     const x0_t = options.x0 ?? 10; const y0_t = options.y0 ?? 50;
-                     const x1_t = options.x1 ?? 60; const y1_t = options.y1 ?? 50;
-                     const x2_t = options.x2 ?? 35; const y2_t = options.y2 ?? 10;
-                     const { minX: minXt, minY: minYt, maxX: maxXt, maxY: maxYt } = calculateBoundingBox([[x0_t,y0_t],[x1_t,y1_t],[x2_t,y2_t]]);
-                    return {
-                        ...baseElement, x0: x0_t, y0: y0_t, x1: x1_t, y1: y1_t, x2: x2_t, y2: y2_t,
-                        fill: options.fill ?? false, x: minXt, y: minYt, width: maxXt - minXt, height: maxYt - minYt,
-                        draw: function(ctx) {
-                            if (!this.visible) return;
-                            ctx.beginPath(); ctx.moveTo(this.x0, this.y0); ctx.lineTo(this.x1, this.y1); ctx.lineTo(this.x2, this.y2); ctx.closePath();
-                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fill(); }
-                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.stroke(); }
-                        }
-                    };
-                 }
-                case 'ellipse': {
-                    const cx_e = options.cx ?? 64; const cy_e = options.cy ?? 32;
-                    const rx_e = options.rx ?? 30; const ry_e = options.ry ?? 15;
-                    return {
-                        ...baseElement, cx: cx_e, cy: cy_e, rx: rx_e, ry: ry_e, fill: options.fill ?? false,
-                        x: cx_e - rx_e, y: cy_e - ry_e, width: rx_e * 2, height: ry_e * 2,
-                        draw: function(ctx) {
-                            if (!this.visible) return;
-                            ctx.beginPath(); ctx.ellipse(this.cx, this.cy, this.rx, this.ry, 0, 0, Math.PI * 2);
-                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fill(); }
-                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.stroke(); }
-                        }
-                    };
-                 }
-                 case 'polygon': {
-                    const defaultPoints = options.points ?? [[10,30], [30,10], [50,30], [50,50], [10,50]];
-                    const { minX, minY, maxX, maxY } = calculateBoundingBox(defaultPoints);
-                    return {
-                        ...baseElement, points: defaultPoints.map(p=>[...p]), /* Ensure deep copy */
-                        fill: options.fill ?? false, x: minX, y: minY, width: maxX - minX, height: maxY - minY,
-                        draw: function(ctx) {
-                            if (!this.visible || !this.points || this.points.length < 2) return;
-                            ctx.beginPath(); ctx.moveTo(this.points[0][0], this.points[0][1]);
-                            for (let i = 1; i < this.points.length; i++) { ctx.lineTo(this.points[i][0], this.points[i][1]); }
-                            ctx.closePath();
-                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fill(); }
-                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.stroke(); }
-                        }
-                    };
-                 }
-                case 'round_rect': {
-                     return {
-                        ...baseElement, radius: options.radius ?? 5, fill: options.fill ?? false,
-                        draw: function(ctx) {
-                            if (!this.visible) return;
-                            const drawX = this.x ?? baseElement.x; const drawY = this.y ?? baseElement.y;
-                            const drawW = this.width ?? baseElement.width; const drawH = this.height ?? baseElement.height;
-                             if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fillRect(drawX, drawY, drawW, drawH); }
-                             else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.strokeRect(drawX, drawY, drawW, drawH); }
-                            ctx.fillStyle = 'rgba(150, 150, 150, 0.8)'; ctx.font = '6px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                            ctx.fillText(`RR (r=${this.radius})`, drawX + drawW / 2, drawY + drawH / 2);
-                        }
-                     };
-                 }
-                case 'icon': {
-                    const iconName = options.iconName || Object.keys(presetIcons)[0];
-                    const iconData = presetIcons[iconName];
-                    if (!iconData) { console.error(`Icon not found: ${iconName}`); return { ...baseElement, type: 'unknown' }; }
-                    return {
-                        ...baseElement, iconName: iconName, width: iconData.width, height: iconData.height,
-                        draw: function(ctx) {
-                            if (!this.visible) return;
-                            const icon = presetIcons[this.iconName]; if (!icon) return;
-                            ctx.fillStyle = PIXEL_COLOR;
-                            for (let r = 0; r < icon.height; r++) {
-                                for (let c = 0; c < icon.width; c++) {
-                                    const index = r * icon.width + c;
-                                    if (icon.data[index] === 1) {
-                                        ctx.fillRect(Math.round(this.x + c), Math.round(this.y + r), 1, 1);
-                                    }
-                                }
-                            }
-                        }
-                    };
-                 }
-                default:
-                    console.warn("Unknown element type requested:", type);
-                    return { ...baseElement, type: 'unknown' };
+
+        // --- State Variables ---
+        let elements = []; // Array to store all drawn elements
+        let spriteLibrary = {}; // Object to store named sprite data
+        let selectedTool = 'select';
+        let selectedElement = null;
+        let dragInfo = null; // { element: ..., offsetX: ..., offsetY: ..., startX: ..., startY: ..., type: 'move' | 'resize' }
+        let drawingShape = null; // { type: ..., startX: ..., startY: ..., currentX: ..., currentY: ... }
+        let animationFrameId = null; // For animation preview
+
+        // --- Grid/Snap State ---
+        let showGrid = false;
+        let snapGrid = false;
+
+        // --- Sprite Editor State ---
+        let currentSpriteData = null; // 2D array [y][x] of 0 or 1
+        let currentSpriteName = 'new_sprite';
+
+
+        // --- Drawing Functions ---
+        function drawPixel(x, y, color) {
+            // Clamp coordinates to display boundaries
+            x = Math.max(0, Math.min(x, DISPLAY_WIDTH - 1));
+            y = Math.max(0, Math.min(y, DISPLAY_HEIGHT - 1));
+            ctx.fillStyle = color === 1 ? 'white' : 'black'; // SSD1306 "on" pixel is typically bright (white on black display)
+            ctx.fillRect(x, y, 1, 1);
+        }
+
+        function drawLine(x0, y0, x1, y1, color) {
+            ctx.strokeStyle = color === 1 ? 'white' : 'black';
+            ctx.beginPath();
+            ctx.moveTo(x0, y0);
+            ctx.lineTo(x1, y1);
+            ctx.stroke();
+        }
+
+        function drawRect(x, y, w, h, color, fill = false) {
+             // Clamp coordinates and size
+            x = Math.max(0, x);
+            y = Math.max(0, y);
+            w = Math.min(w, DISPLAY_WIDTH - x);
+            h = Math.min(h, DISPLAY_HEIGHT - y);
+
+            if (w <= 0 || h <= 0) return;
+
+            ctx.strokeStyle = color === 1 ? 'white' : 'black';
+            ctx.fillStyle = color === 1 ? 'white' : 'black';
+
+            if (fill) {
+                ctx.fillRect(x, y, w, h);
+            } else {
+                ctx.strokeRect(x, y, w, h);
             }
+        }
+
+        function drawCircle(cx, cy, r, color, fill = false) {
+            // Clamp center and radius - simple clamp might clip.
+            // For simplicity, just draw if center is within bounds. Clipping is more complex.
+             if (cx < -r || cx > DISPLAY_WIDTH + r || cy < -r || cy > DISPLAY_HEIGHT + r) return;
+
+            ctx.strokeStyle = color === 1 ? 'white' : 'black';
+            ctx.fillStyle = color === 1 ? 'white' : 'black';
+
+            ctx.beginPath();
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+
+            if (fill) {
+                ctx.fill();
+            } else {
+                ctx.stroke();
+            }
+        }
+
+         function drawText(text, x, y, color) {
+            // Text positioning is tricky on pixel displays. (x,y) is often top-left or baseline.
+            // MicroPython framebuf uses (x,y) as top-left of the text bounding box. We'll simulate that.
+             if (x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT) return; // Simple clipping
+
+            ctx.fillStyle = color === 1 ? 'white' : 'black';
+            // Use a simple monospace font matching typical display fonts
+            ctx.font = '8px monospace'; // Assume 8px height for typical fonts
+
+            // Ensure text stays within bounds horizontally
+             let clippedText = text;
+             let textMetrics = ctx.measureText(clippedText);
+             while(x + textMetrics.width > DISPLAY_WIDTH && clippedText.length > 0) {
+                 clippedText = clippedText.slice(0, -1);
+                 textMetrics = ctx.measureText(clippedText);
+             }
+             if (clippedText.length === 0) return; // Text is too long to fit
+
+            // Vertical position: MicroPython text often draws from the top-left of the character box.
+            // Canvas drawText y is typically the baseline. We need to adjust.
+            // A common font height is 8px. Let's assume that and adjust.
+            const fontHeight = 8;
+            const adjustedY = y + fontHeight; // Draw baseline at y + fontHeight
+
+            // Only draw if at least part of the text is within vertical bounds
+             if (adjustedY >= 0 && y < DISPLAY_HEIGHT) {
+                ctx.fillText(clippedText, x, adjustedY);
+             }
+        }
+
+        function drawSprite(x, y, spriteData, color) {
+            if (!spriteData || spriteData.length === 0) return;
+
+            const spriteHeight = spriteData.length;
+            const spriteWidth = spriteData[0].length;
+
+             // Clamp sprite position - simple clipping
+             x = Math.max(0, x);
+             y = Math.max(0, y);
+
+            for (let j = 0; j < spriteHeight; j++) {
+                for (let i = 0; i < spriteWidth; i++) {
+                    if (spriteData[j][i] === 1) {
+                        // Draw pixel only if it's 'on' and within display bounds
+                         if (x + i < DISPLAY_WIDTH && y + j < DISPLAY_HEIGHT) {
+                             drawPixel(x + i, y + j, color);
+                         }
+                    }
+                }
+            }
+        }
+
+
+        function drawGrid() {
+            if (!showGrid) return;
+
+            ctx.strokeStyle = '#111'; // Dark grey/black for grid lines on black background
+            ctx.lineWidth = 0.5;
+
+            // Vertical lines
+            for (let x = 0; x < DISPLAY_WIDTH; x += GRID_SIZE) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, DISPLAY_HEIGHT);
+                ctx.stroke();
+            }
+
+            // Horizontal lines
+            for (let y = 0; y < DISPLAY_HEIGHT; y += GRID_SIZE) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(DISPLAY_WIDTH, y);
+                ctx.stroke();
+            }
+             ctx.lineWidth = 1; // Reset line width
+        }
+
+         function drawBoundingBox(element) {
+             ctx.strokeStyle = 'red'; // Highlight color
+             ctx.lineWidth = 1;
+             ctx.setLineDash([2, 2]); // Dashed line
+
+             let x, y, w, h;
+             const padding = 1; // Small padding around the element
+
+             switch (element.type) {
+                 case 'pixel':
+                     x = element.x - padding;
+                     y = element.y - padding;
+                     w = 1 + 2 * padding;
+                     h = 1 + 2 * padding;
+                     break;
+                 case 'line':
+                     // Bounding box of a line is min/max x,y
+                     x = Math.min(element.x1, element.x2) - padding;
+                     y = Math.min(element.y1, element.y2) - padding;
+                     w = Math.abs(element.x1 - element.x2) + 1 + 2 * padding;
+                     h = Math.abs(element.y1 - element.y2) + 1 + 2 * padding;
+                     break;
+                 case 'rect':
+                 case 'filled-rect':
+                     x = element.x - padding;
+                     y = element.y - padding;
+                     w = element.width + 2 * padding;
+                     h = element.height + 2 * padding;
+                     break;
+                 case 'circle':
+                 case 'filled-circle':
+                      // Bounding box of a circle
+                     x = element.cx - element.r - padding;
+                     y = element.cy - element.r - padding;
+                     w = element.r * 2 + 2 * padding;
+                     h = element.r * 2 + 2 * padding;
+                     break;
+                 case 'text':
+                      // Simple bounding box for text based on estimated font size
+                     const textWidth = element.text.length * 8; // Estimate width assuming 8px wide chars
+                     const textHeight = 8; // Estimate height
+                     x = element.x - padding;
+                     y = element.y - padding;
+                     w = textWidth + 2 * padding;
+                     h = textHeight + 2 * padding;
+                     break;
+                 case 'sprite':
+                     const sprite = spriteLibrary[element.spriteDataRef];
+                     if (!sprite) return;
+                     x = element.x - padding;
+                     y = element.y - padding;
+                     w = sprite.width + 2 * padding;
+                     h = sprite.height + 2 * padding;
+                     break;
+                 default:
+                     return; // Don't draw box for unknown types
+             }
+
+             // Adjust clamped box to canvas bounds
+             x = Math.max(0, x);
+             y = Math.max(0, y);
+             w = Math.min(w, DISPLAY_WIDTH - x);
+             h = Math.min(h, DISPLAY_HEIGHT - y);
+
+
+             ctx.strokeRect(x, y, w, h);
+
+             ctx.setLineDash([]); // Reset line dash
+             ctx.lineWidth = 1; // Reset line width
+         }
+
+
+        function draw() {
+            ctx.clearRect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT); // Fill background
+
+            if (showGrid) {
+                drawGrid();
+            }
+
+            elements.forEach(el => {
+                // Check if element has animation data and update position if animation is playing (JS preview)
+                if (el.animation && el.animation.progress !== undefined) {
+                     const currentStep = el.animation.progress;
+                     const totalSteps = el.animation.steps;
+                     const startX = el.animation.startX;
+                     const startY = el.animation.startY;
+                     const endX = el.animation.endX;
+                     const endY = el.animation.endY;
+
+                     // Linear interpolation
+                     el._currentRenderX = startX + (endX - startX) * (currentStep / totalSteps);
+                     el._currentRenderY = startY + (endY - startY) * (currentStep / totalSteps);
+                } else {
+                    // Use stored x, y if no animation is active
+                    el._currentRenderX = el.x;
+                    el._currentRenderY = el.y;
+                }
+
+
+                // Draw element based on type
+                switch (el.type) {
+                    case 'pixel':
+                         drawPixel(el._currentRenderX, el._currentRenderY, el.color);
+                        break;
+                    case 'line':
+                         // For line, animation moves both points
+                         const lineStartX = el.animation ? el.animation.startX : el.x1;
+                         const lineStartY = el.animation ? el.animation.startY : el.y1;
+                         const lineEndX = el.animation ? el.animation.endX : el.x2;
+                         const lineEndY = el.animation ? el.animation.endY : el.y2;
+
+                         let currentLineX1 = el._currentRenderX;
+                         let currentLineY1 = el._currentRenderY;
+                         let currentLineX2 = lineStartX + (lineEndX - lineStartX) * ((el.animation?.progress || 0) / (el.animation?.steps || 1));
+                         let currentLineY2 = lineStartY + (lineEndY - lineStartY) * ((el.animation?.progress || 0) / (el.animation?.steps || 1));
+
+                         // The _currentRenderX/Y tracks the movement of the "origin" point (x,y for rect, cx,cy for circle, x for text/sprite).
+                         // For a line, we need to shift both start and end points by the delta movement of the 'origin'.
+                         // Let's define the line origin as (x1, y1) for animation tracking.
+                         const deltaX = (el._currentRenderX || el.x1) - el.x1;
+                         const deltaY = (el._currentRenderY || el.y1) - el.y1;
+                         drawLine(el.x1 + deltaX, el.y1 + deltaY, el.x2 + deltaX, el.y2 + deltaY, el.color);
+
+                        break;
+                    case 'rect':
+                    case 'filled-rect':
+                         drawRect(el._currentRenderX, el._currentRenderY, el.width, el.height, el.color, el.fill);
+                        break;
+                    case 'circle':
+                    case 'filled-circle':
+                         drawCircle(el._currentRenderX, el._currentRenderY, el.radius, el.color, el.fill);
+                        break;
+                    case 'text':
+                         drawText(el.text, el._currentRenderX, el._currentRenderY, el.color);
+                        break;
+                    case 'sprite':
+                        const spriteData = spriteLibrary[el.spriteDataRef];
+                         if (spriteData) {
+                            drawSprite(el._currentRenderX, el._currentRenderY, spriteData.data, el.color);
+                         } else {
+                             console.error(`Sprite data not found for reference: ${el.spriteDataRef}`);
+                         }
+                        break;
+                }
+            });
+
+             // Draw bounding box for the selected element AFTER drawing all elements
+             if (selectedElement) {
+                 drawBoundingBox(selectedElement);
+             }
         }
 
         // --- Helper Functions ---
-        function calculateBoundingBox(points) { /* ... (same) ... */ }
-        function parsePointsString(pointsStr) { /* ... (same) ... */ }
-        function formatPointsString(pointsArr) { /* ... (same) ... */ }
-        function populateIconSelector(selectElement) { /* ... (same) ... */ }
-        // Deep copy helper for history states
-        function deepCopyElements(elementsArray) {
-            // Simple JSON stringify/parse for deep copy (works for current structure)
-             try {
-                 return JSON.parse(JSON.stringify(elementsArray));
-             } catch (e) {
-                 console.error("Deep copy failed:", e);
-                 return []; // Return empty array on failure
+
+        function getMousePos(event) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let x = (event.clientX - rect.left) * scaleX;
+            let y = (event.clientY - rect.top) * scaleY;
+
+             if (snapGrid && (selectedTool === 'select' || drawingShape)) { // Apply snap only when selecting/moving or drawing
+                 x = Math.round(x / GRID_SIZE) * GRID_SIZE;
+                 y = Math.round(y / GRID_SIZE) * GRID_SIZE;
              }
+
+            // Clamp to canvas boundaries
+            x = Math.max(0, Math.min(x, DISPLAY_WIDTH - (selectedTool === 'pixel' || selectedTool === 'eraser' ? 1 : 0))); // Clamp pixel exactly
+            y = Math.max(0, Math.min(y, DISPLAY_HEIGHT - (selectedTool === 'pixel' || selectedTool === 'eraser' ? 1 : 0))); // Clamp pixel exactly
+
+            return { x: Math.round(x), y: Math.round(y) };
         }
 
-
-        // --- History Management ---
-        function saveState() {
-            // Clear redo stack
-            history = history.slice(0, historyIndex + 1);
-            // Push deep copy of current state
-            history.push(deepCopyElements(elements));
-            historyIndex++;
-            // Limit history size (e.g., 50 steps)
-            if (history.length > 50) {
-                history.shift(); // Remove oldest state
-                historyIndex--;
-            }
-            updateUndoRedoButtons();
+         function updateMouseCoordinates(event) {
+            const pos = getMousePos(event);
+            mouseCoordsDiv.textContent = `(${pos.x}, ${pos.y})`;
         }
 
-        function undo() {
-            if (historyIndex > 0) {
-                historyIndex--;
-                elements = deepCopyElements(history[historyIndex]); // Load previous state
-                deselectElement(); // Deselect after undo/redo
-                redrawAll();
-                updateUndoRedoButtons();
-                generateMicroPythonCode();
-            }
-        }
-
-        function redo() {
-            if (historyIndex < history.length - 1) {
-                historyIndex++;
-                elements = deepCopyElements(history[historyIndex]); // Load next state
-                deselectElement();
-                redrawAll();
-                updateUndoRedoButtons();
-                generateMicroPythonCode();
-            }
-        }
-
-        function updateUndoRedoButtons() {
-            undoBtn.disabled = historyIndex <= 0;
-            redoBtn.disabled = historyIndex >= history.length - 1;
-        }
-
-        // --- Save/Load ---
-        function saveDesign() {
-            try {
-                const designData = {
-                    version: 1, // Add a version number for future compatibility
-                    displaySize: `${SCREEN_WIDTH}x${SCREEN_HEIGHT}`,
-                    elements: elements
-                };
-                localStorage.setItem('ssd1306_design', JSON.stringify(designData));
-                alert('Design saved successfully!');
-                // Optionally save state after saving
-                // saveState(); // Decided against this to avoid polluting undo stack
-            } catch (e) {
-                console.error("Error saving design:", e);
-                alert('Error saving design. Local storage might be full or disabled.');
-            }
-        }
-
-        function loadDesign() {
-            try {
-                const savedData = localStorage.getItem('ssd1306_design');
-                if (savedData) {
-                    const designData = JSON.parse(savedData);
-                    // Basic validation/migration if needed based on version
-                    if (designData.version === 1 && Array.isArray(designData.elements)) {
-                        // Set display size
-                        const size = designData.displaySize || '128x64';
-                        displaySizeSelect.value = size; // Set dropdown
-                        setDisplaySize(size); // Apply size change
-
-                        // Load elements (re-create to ensure methods are attached if needed, though current structure is data-only)
-                        // elements = designData.elements.map(elData => createElement(elData.type, elData));
-                        // Simpler load for now as createElement handles options object:
-                        elements = deepCopyElements(designData.elements);
-
-                        deselectElement();
-                        history = [deepCopyElements(elements)]; // Reset history with loaded state
-                        historyIndex = 0;
-                        redrawAll();
-                        updateUndoRedoButtons();
-                        generateMicroPythonCode();
-                        alert('Design loaded successfully!');
-                    } else {
-                         alert('Invalid or incompatible save data found.');
-                    }
-                } else {
-                    alert('No saved design found.');
-                }
-            } catch (e) {
-                console.error("Error loading design:", e);
-                alert('Error loading design. Saved data might be corrupted.');
-            }
-        }
-
-
-        // --- Drawing & Canvas Updates ---
-        function clearCanvas() { /* ... (same) ... */ }
-        function drawGrid() {
-             if (!showGrid) {
-                 gridOverlay.style.display = 'none';
-                 return;
+         function selectTool(tool) {
+            selectedTool = tool;
+            toolButtons.forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`tool-${tool}`).classList.add('active');
+            // Reset drawing state when tool changes
+             drawingShape = null;
+            // Deselect element unless the new tool is 'select' and an element is already selected
+             if (tool !== 'select' || !selectedElement) {
+                 selectElement(null);
              }
-             gridOverlay.style.display = 'block';
-             // Update background size based on current zoom and grid size
-             const scaledGridSizeX = GRID_SIZE * CANVAS_SCALE_X * currentZoom;
-             const scaledGridSizeY = GRID_SIZE * CANVAS_SCALE_Y * currentZoom;
-             gridOverlay.style.backgroundSize = `${scaledGridSizeX}px ${scaledGridSizeY}px`;
-        }
+         }
 
-        // Draw visual overlays for locked/hidden elements
-        function drawElementOverlays() {
-            elementOverlaysDiv.innerHTML = ''; // Clear previous overlays
-            elements.forEach(el => {
-                 if (!el.visible || el.locked) {
-                    const overlay = document.createElement('div');
-                    overlay.className = 'element-overlay';
-                    overlay.style.left = `${el.x * CANVAS_SCALE_X * currentZoom}px`;
-                    overlay.style.top = `${el.y * CANVAS_SCALE_Y * currentZoom}px`;
-                    overlay.style.width = `${el.width * CANVAS_SCALE_X * currentZoom}px`;
-                    overlay.style.height = `${el.height * CANVAS_SCALE_Y * currentZoom}px`;
+         function updatePropertiesPanel() {
+             if (selectedElement) {
+                 noElementSelectedMsg.style.display = 'none';
+                 propertiesPanel.style.display = 'block';
 
-                    if (el.locked) {
-                        overlay.classList.add('locked-overlay');
-                        overlay.innerHTML = '<i class="fas fa-lock"></i>'; // Show lock icon
-                    }
-                    if (!el.visible) {
-                         overlay.classList.add('hidden-overlay');
-                         if (!el.locked) { // Don't show eye if already showing lock
-                            overlay.innerHTML = '<i class="fas fa-eye-slash"></i>';
-                         }
-                    }
-                    elementOverlaysDiv.appendChild(overlay);
+                 propTypeSpan.textContent = selectedElement.type;
+                 propXInput.value = selectedElement.x;
+                 propYInput.value = selectedElement.y;
+
+                 // Hide/show specific properties based on element type
+                 propTextDiv.style.display = (selectedElement.type === 'text') ? 'block' : 'none';
+                 propSizeDivs.forEach(div => div.style.display = (selectedElement.type === 'rect' || selectedElement.type === 'filled-rect' || selectedElement.type === 'sprite') ? 'block' : 'none');
+                 propRadiusDiv.style.display = (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') ? 'block' : 'none';
+                 propColorDiv.style.display = (selectedElement.type !== 'sprite') ? 'block' : 'none'; // Sprites use the sprite element's color
+                 propFillDiv.style.display = (selectedElement.type === 'rect' || selectedElement.type === 'circle') ? 'block' : 'none'; // Only rect/circle have fill option
+
+                 // Sprite specific property
+                 propSpriteDiv.style.display = (selectedElement.type === 'sprite') ? 'block' : 'none';
+                 if (selectedElement.type === 'sprite') {
+                     // currentSpriteName = selectedElement.spriteDataRef; // Load sprite name into editor state? No, just reference.
+                     // Need a way to edit the referenced sprite data... Maybe open the editor with the referenced sprite loaded.
                  }
-            });
-        }
 
-        function redrawCanvas() {
-             clearCanvas();
-             // Draw elements in order (respecting layers)
-             elements.forEach(element => {
-                 // Skip drawing hidden elements
-                 if (element && typeof element.draw === 'function' && element.visible) {
-                     ctx.save();
-                     element.draw(ctx);
-                     ctx.restore();
-                 } else if (element && !element.visible) {
-                     // Optionally draw a placeholder for hidden elements? No, keep it clean.
-                 } else if(element) {
-                     console.error("Invalid element found:", element);
+
+                 // Update input values
+                 if (selectedElement.type === 'text') propTextContentInput.value = selectedElement.text;
+                 if (selectedElement.type === 'rect' || selectedElement.type === 'filled-rect' || selectedElement.type === 'sprite') {
+                      if (selectedElement.type === 'sprite') {
+                          const sprite = spriteLibrary[selectedElement.spriteDataRef];
+                           if(sprite) {
+                                propWidthInput.value = sprite.width; // Display sprite dimensions
+                                propHeightInput.value = sprite.height;
+                                propWidthInput.disabled = true; // Cannot resize sprite via this panel
+                                propHeightInput.disabled = true;
+                           }
+                      } else {
+                        propWidthInput.value = selectedElement.width;
+                        propHeightInput.value = selectedElement.height;
+                         propWidthInput.disabled = false;
+                         propHeightInput.disabled = false;
+                      }
                  }
-             });
-             updateSelectionBox(); // Update selection box based on potentially changed element bounds
-             drawElementOverlays(); // Draw locked/hidden indicators
-        }
+                 if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') propRadiusInput.value = selectedElement.radius;
+                 if (selectedElement.type !== 'sprite') propColorSelect.value = selectedElement.color;
+                 if (selectedElement.type === 'rect' || selectedElement.type === 'circle') propFillCheckbox.checked = selectedElement.fill;
 
-        // Full redraw including canvas size/scale updates
-        function redrawAll() {
-            updateCanvasSizeAndScale();
-            drawGrid();
-            redrawCanvas();
-        }
+                 // Update animation panel
+                 updateAnimationPanel();
 
-
-        // --- Selection & Manipulation ---
-        function getElementAtPosition(canvasX, canvasY) {
-             // Iterate backwards to select topmost visible & unlocked element
-             for (let i = elements.length - 1; i >= 0; i--) {
-                const el = elements[i];
-                if (!el || !el.visible || el.locked) continue; // Skip hidden or locked
-                const buffer = 3;
-                const x1 = el.x - buffer; const y1 = el.y - buffer;
-                const x2 = el.x + el.width + buffer; const y2 = el.y + el.height + buffer;
-                if (canvasX >= x1 && canvasX <= x2 && canvasY >= y1 && canvasY <= y2) { return el; }
-            }
-            return null;
-        }
-        function updateSelectionBox() { /* ... (same, but respects zoom) ... */
-             if (selectedElement && selectedElement.visible) { // Only show for visible elements
-                selectionBox.style.display = 'block';
-                const scaledX = selectedElement.x * CANVAS_SCALE_X * currentZoom;
-                const scaledY = selectedElement.y * CANVAS_SCALE_Y * currentZoom;
-                const scaledWidth = selectedElement.width * CANVAS_SCALE_X * currentZoom;
-                const scaledHeight = selectedElement.height * CANVAS_SCALE_Y * currentZoom;
-                selectionOutline.style.left = `${scaledX}px`; selectionOutline.style.top = `${scaledY}px`;
-                selectionOutline.style.width = `${scaledWidth}px`; selectionOutline.style.height = `${scaledHeight}px`;
-                const showHandles = ['rectangle', 'text', 'round_rect'].includes(selectedElement.type);
-                resizeHandles.forEach(h => h.style.display = showHandles ? 'block' : 'none');
-            } else {
-                selectionBox.style.display = 'none';
-            }
-        }
-        function updatePropertiesPanel() { /* ... (includes lock/visible icons) ... */
-             const lockIcon = document.getElementById('prop-locked-toggle');
-             const visibleIcon = document.getElementById('prop-visible-toggle');
-
-             if (!selectedElement) {
-                propertiesPanel.classList.add('hidden');
-                // Disable layer buttons etc.
-                copyBtn.disabled = true;
-                deleteBtn.disabled = true;
-                bringForwardBtn.disabled = true; sendBackwardBtn.disabled = true;
-                bringFrontBtn.disabled = true; sendBackBtn.disabled = true;
-                return;
-            }
-            propertiesPanel.classList.remove('hidden');
-            document.querySelectorAll('.shape-properties').forEach(el => el.classList.add('hidden'));
-
-            const sectionId = `${selectedElement.type}-properties`;
-            const section = document.getElementById(sectionId);
-            const animationSection = document.getElementById('animation-properties');
-
-             // Update Lock/Visible Icons
-             lockIcon.classList.toggle('active', selectedElement.locked);
-             lockIcon.classList.toggle('fa-lock', selectedElement.locked);
-             lockIcon.classList.toggle('fa-lock-open', !selectedElement.locked);
-             visibleIcon.classList.toggle('active', selectedElement.visible);
-             visibleIcon.classList.toggle('fa-eye', selectedElement.visible);
-             visibleIcon.classList.toggle('fa-eye-slash', !selectedElement.visible);
-
-            if (section) { /* ... (populate inputs - same as before) ... */
-                section.classList.remove('hidden');
-                section.querySelectorAll('.prop-input').forEach(input => {
-                    const propName = input.dataset.prop;
-                    if (propName && selectedElement.hasOwnProperty(propName)) {
-                        if (input.tagName === 'SELECT' && propName === 'iconName') { populateIconSelector(input); input.value = selectedElement[propName]; }
-                        else if (input.type === 'checkbox') { input.checked = selectedElement[propName]; }
-                        else if (propName === 'points') { input.value = formatPointsString(selectedElement[propName]); }
-                        else { input.value = selectedElement[propName]; }
-                    }
-                });
-             } else if (selectedElement.type !== 'unknown') { console.warn(`Properties section not found: ${selectedElement.type}`); }
-
-            if (animationSection && selectedElement.type !== 'unknown') { /* ... (populate animation inputs - same) ... */
-                 animationSection.classList.remove('hidden');
-                 animationSection.querySelectorAll('.prop-input').forEach(input => {
-                     const propName = input.dataset.prop;
-                     if (propName === 'toggleAnimate') { input.textContent = selectedElement.isAnimating ? 'Stop Animation' : 'Start Animation'; }
-                     else if (propName && selectedElement.hasOwnProperty(propName)) { input.value = selectedElement[propName] === null ? '' : selectedElement[propName]; }
-                 });
-             } else if (animationSection) { animationSection.classList.add('hidden'); }
-
-             // Enable/disable buttons based on selection
-             copyBtn.disabled = false;
-             deleteBtn.disabled = false;
-             const index = elements.findIndex(el => el.id === selectedElement.id);
-             bringForwardBtn.disabled = index >= elements.length - 1;
-             sendBackwardBtn.disabled = index <= 0;
-             bringFrontBtn.disabled = index >= elements.length - 1;
-             sendBackBtn.disabled = index <= 0;
-        }
-        function selectElement(element) { /* ... (same) ... */ }
-        function deselectElement() { /* ... (same) ... */ }
-        function deleteSelectedElement() {
-            if (selectedElement && !selectedElement.locked) { // Check lock
-                const index = elements.findIndex(el => el.id === selectedElement.id);
-                 if(selectedElement.isAnimating) stopAnimation(selectedElement);
-                elements.splice(index, 1); // Remove from array
-                deselectElement();
-                redrawAll(); // Use redrawAll to handle overlays
-                saveState(); // Save history
-                generateMicroPythonCode();
-            }
-        }
-        function updateElementBounds(element) { /* ... (same) ... */ }
-
-
-        // --- Event Handlers ---
-        function getCanvasCoordinates(event) {
-             // Adjust coordinates based on zoom and container offset
-             const rect = canvasContainer.getBoundingClientRect(); // Use container rect
-             let clientX, clientY;
-             if (event.touches && event.touches.length > 0) { clientX = event.touches[0].clientX; clientY = event.touches[0].clientY; }
-             else if (event.changedTouches && event.changedTouches.length > 0) { clientX = event.changedTouches[0].clientX; clientY = event.changedTouches[0].clientY; }
-             else { clientX = event.clientX; clientY = event.clientY; }
-
-             // Coordinates relative to the scaled+zoomed container
-             const containerX = clientX - rect.left;
-             const containerY = clientY - rect.top;
-
-             // Convert to original 0-SCREEN_WIDTH/HEIGHT range
-             const canvasX = Math.floor(containerX / (CANVAS_SCALE_X * currentZoom));
-             const canvasY = Math.floor(containerY / (CANVAS_SCALE_Y * currentZoom));
-
-             const clampedX = Math.max(0, Math.min(SCREEN_WIDTH - 1, canvasX));
-             const clampedY = Math.max(0, Math.min(SCREEN_HEIGHT - 1, canvasY));
-             return { x: clampedX, y: clampedY };
-        }
-        canvasContainer.addEventListener('mousemove', (event) => { /* ... (coord display update - uses updated getCanvasCoordinates) ... */ });
-        canvasContainer.addEventListener('mouseleave', () => { /* ... (same) ... */ });
-
-        // Snap coordinates to grid
-        function snapToGridValue(value) {
-            if (!snapToGrid) return Math.round(value);
-            return Math.round(value / GRID_SIZE) * GRID_SIZE;
-        }
-
-        function handleMouseDown(event) {
-            // Prevent interaction if target is not the canvas itself (e.g., selection box handles)
-             if (event.target !== canvas && !event.target.classList.contains('resize-handle')) {
-                 // Allow clicks on overlays if needed, but maybe prevent drag start
-                 // return;
-             }
-
-             event.preventDefault();
-             const { x, y } = getCanvasCoordinates(event);
-
-             // Check resize handles first
-             const canResize = selectedElement && selectedElement.visible && !selectedElement.locked && ['rectangle', 'text', 'round_rect'].includes(selectedElement.type);
-             if (canResize && event.target.classList.contains('resize-handle')) {
-                  isResizing = true; isDragging = false;
-                  resizeHandleType = event.target.classList.contains('tl') ? 'tl' : event.target.classList.contains('tr') ? 'tr' : event.target.classList.contains('bl') ? 'bl' : 'br';
-                  dragStartX = x; dragStartY = y; // Use un-snapped coords for delta calculation
-                  selectedElement.originalRect = { x: selectedElement.x, y: selectedElement.y, width: selectedElement.width, height: selectedElement.height };
-                  canvasContainer.style.cursor = event.target.style.cursor; return;
-             }
-
-             // Check element selection (only visible and unlocked)
-             const clickedElement = getElementAtPosition(x, y); // Already checks visible/locked
-             if (clickedElement) {
-                 selectElement(clickedElement); isDragging = true;
-                 dragStartX = x; dragStartY = y; // Use un-snapped start coords
-                 // Store initial state for delta calculations during drag
-                 selectedElement.dragInitialState = deepCopyElements([selectedElement])[0]; // Deep copy initial state
-                 canvasContainer.style.cursor = 'move';
              } else {
-                 deselectElement(); isDragging = false; canvasContainer.style.cursor = 'default';
+                 noElementSelectedMsg.style.display = 'block';
+                 propertiesPanel.style.display = 'none';
+                 updateAnimationPanel(); // Hide animation controls too
              }
-             isResizing = false;
+         }
+
+         function updateAnimationPanel() {
+             if (selectedElement) {
+                 noAnimSelectedMsg.style.display = 'none';
+                 selectedAnimControls.style.display = 'block';
+
+                 // Show animation data if exists, otherwise show default values
+                 if (selectedElement.animation) {
+                     animEndXInput.value = selectedElement.animation.endX;
+                     animEndYInput.value = selectedElement.animation.endY;
+                     animStepsInput.value = selectedElement.animation.steps;
+                     addAnimationButton.style.display = 'none';
+                     removeAnimationButton.style.display = 'inline-block';
+                 } else {
+                     // Default end position to current + offset
+                     animEndXInput.value = selectedElement.x + 10;
+                     animEndYInput.value = selectedElement.y;
+                     animStepsInput.value = 50;
+                      addAnimationButton.style.display = 'inline-block';
+                     removeAnimationButton.style.display = 'none';
+                 }
+
+             } else {
+                 noAnimSelectedMsg.style.display = 'block';
+                 selectedAnimControls.style.display = 'none';
+             }
+             // Animation preview controls are always visible if controls are visible,
+             // but play/stop only work if animation data is set.
+             playAnimationButton.disabled = !selectedElement || !selectedElement.animation;
+             stopAnimationButton.disabled = animationFrameId === null; // Stop only active when playing
+         }
+
+
+         function updateElementList() {
+             elementListDiv.innerHTML = '';
+             elements.forEach((el, index) => {
+                 const item = document.createElement('div');
+                 item.classList.add('element-list-item');
+                 if (el === selectedElement) {
+                     item.classList.add('selected');
+                 }
+                 let label = `${el.type}`;
+                 if (el.type === 'text') label += ` ("${el.text.substring(0, 10)}...")`;
+                 if (el.type === 'sprite' && spriteLibrary[el.spriteDataRef]) label += ` (${el.spriteDataRef})`;
+                 label += ` @ (${el.x},${el.y})`;
+                 item.textContent = `${index}: ${label}`;
+                 item.dataset.index = index;
+                 item.addEventListener('click', () => {
+                     selectElement(el);
+                 });
+                 elementListDiv.appendChild(item);
+             });
+             // Disable move buttons if no element selected or at list boundary
+             moveUpButton.disabled = !selectedElement || elements.indexOf(selectedElement) === 0;
+             moveDownButton.disabled = !selectedElement || elements.indexOf(selectedElement) === elements.length - 1;
+         }
+
+         function selectElement(element) {
+             if (selectedElement === element) return; // Avoid re-selecting the same element
+
+             // Stop any ongoing animation when selecting a new element
+             stopAnimationPreview();
+
+             selectedElement = element;
+             updatePropertiesPanel();
+             updateElementList();
+             draw(); // Redraw to show/hide bounding box
+         }
+
+
+         function isPointInElement(x, y, element) {
+            // Simple hit-testing based on bounding boxes
+            switch (element.type) {
+                case 'pixel':
+                    return x === element.x && y === element.y;
+                case 'line':
+                    // More complex: check distance to line segment. For simplicity, check bounding box.
+                     let minX = Math.min(element.x1, element.x2);
+                     let maxX = Math.max(element.x1, element.x2);
+                     let minY = Math.min(element.y1, element.y2);
+                     let maxY = Math.max(element.y1, element.y2);
+                     // Add a small tolerance for easier clicking
+                     const tolerance = 2;
+                     return x >= minX - tolerance && x <= maxX + tolerance && y >= minY - tolerance && y <= maxY + tolerance;
+                case 'rect':
+                case 'filled-rect':
+                     return x >= element.x && x < element.x + element.width && y >= element.y && y < element.y + element.height;
+                case 'circle':
+                case 'filled-circle':
+                     // Check if point is within radius of center
+                     const dx = x - element.cx;
+                     const dy = y - element.cy;
+                     return dx * dx + dy * dy <= element.radius * element.radius;
+                 case 'text':
+                     // Simple bounding box for text
+                     const textWidth = element.text.length * 8; // Estimate
+                     const textHeight = 8; // Estimate
+                     return x >= element.x && x < element.x + textWidth && y >= element.y && y < element.y + textHeight;
+                 case 'sprite':
+                     const sprite = spriteLibrary[element.spriteDataRef];
+                     if (!sprite) return false;
+                     return x >= element.x && x < element.x + sprite.width && y >= element.y && y < element.y + sprite.height;
+                default:
+                    return false;
+            }
+         }
+
+        function snapToGrid(x, y) {
+            if (!snapGrid) return { x, y };
+            return {
+                x: Math.round(x / GRID_SIZE) * GRID_SIZE,
+                y: Math.round(y / GRID_SIZE) * GRID_SIZE
+            };
         }
 
-        function handleMouseMove(event) {
-            if (!isDragging && !isResizing) return;
-            event.preventDefault();
-            let { x, y } = getCanvasCoordinates(event); // Get current mouse position in canvas space
 
-            // --- Dragging Logic ---
-            if (isDragging && selectedElement) {
-                 const initialState = selectedElement.dragInitialState;
-                 if (!initialState) return;
+         // --- Event Handlers ---
 
-                 // Calculate raw delta from the actual drag start position
-                 const rawDx = x - dragStartX;
-                 const rawDy = y - dragStartY;
+         canvas.addEventListener('mousemove', (event) => {
+             updateMouseCoordinates(event);
+             const pos = getMousePos(event);
 
-                 // Calculate new top-left corner (or center for some shapes) based on raw delta
-                 let potentialNewX = initialState.x + rawDx;
-                 let potentialNewY = initialState.y + rawDy;
+             // If drawing a shape, update its dimensions and redraw
+             if (drawingShape) {
+                 drawingShape.currentX = pos.x;
+                 drawingShape.currentY = pos.y;
+                 draw(); // Redraw with the current drawing shape
+             } else if (dragInfo) {
+                 // Moving an element
+                 let newX = pos.x - dragInfo.offsetX;
+                 let newY = pos.y - dragInfo.offsetY;
 
-                 // Apply Snapping to the potential new position
-                 if (snapToGrid) {
-                     potentialNewX = snapToGridValue(potentialNewX);
-                     potentialNewY = snapToGridValue(potentialNewY);
+                 // Apply snapping if enabled
+                 if (snapGrid) {
+                      const snappedPos = snapToGrid(newX, newY);
+                      newX = snappedPos.x;
+                      newY = snappedPos.y;
+                 }
+
+                 // Update element's position. For lines, move both points.
+                 if (dragInfo.element.type === 'line') {
+                     const dx = newX - dragInfo.element.x1;
+                     const dy = newY - dragInfo.element.y1;
+                     dragInfo.element.x1 = newX;
+                     dragInfo.element.y1 = newY;
+                     dragInfo.element.x2 += dx;
+                     dragInfo.element.y2 += dy;
                  } else {
-                      potentialNewX = Math.round(potentialNewX);
-                      potentialNewY = Math.round(potentialNewY);
-                 }
-
-                 // Calculate the *actual* snapped delta
-                 const snappedDx = potentialNewX - initialState.x;
-                 const snappedDy = potentialNewY - initialState.y;
-
-                 // Update element properties based on the *snapped* delta
-                 switch (selectedElement.type) {
-                    case 'rectangle': case 'text': case 'round_rect': case 'icon':
-                        selectedElement.x = initialState.x + snappedDx;
-                        selectedElement.y = initialState.y + snappedDy;
-                        break;
-                    case 'circle': case 'ellipse':
-                        // Snap center position
-                        const potentialCx = initialState.cx + rawDx;
-                        const potentialCy = initialState.cy + rawDy;
-                        selectedElement.cx = snapToGrid ? snapToGridValue(potentialCx) : Math.round(potentialCx);
-                        selectedElement.cy = snapToGrid ? snapToGridValue(potentialCy) : Math.round(potentialCy);
-                        break;
-                    case 'line':
-                        // Snap both points individually if desired, or just the start point?
-                        // Let's snap the whole line based on start point delta for now.
-                        selectedElement.x = initialState.x + snappedDx; // x1
-                        selectedElement.y = initialState.y + snappedDy; // y1
-                        selectedElement.x2 = initialState.x2 + snappedDx;
-                        selectedElement.y2 = initialState.y2 + snappedDy;
-                        break;
-                    case 'triangle':
-                        // Snap all points based on delta from initial state
-                        selectedElement.x0 = initialState.x0 + snappedDx; selectedElement.y0 = initialState.y0 + snappedDy;
-                        selectedElement.x1 = initialState.x1 + snappedDx; selectedElement.y1 = initialState.y1 + snappedDy;
-                        selectedElement.x2 = initialState.x2 + snappedDx; selectedElement.y2 = initialState.y2 + snappedDy;
-                        break;
-                    case 'polygon':
-                        if (initialState.points) {
-                            selectedElement.points = initialState.points.map(p => [p[0] + snappedDx, p[1] + snappedDy]);
-                        }
-                        break;
-                 }
-                 updateElementBounds(selectedElement); updatePropertiesPanel(); updateSelectionBox(); redrawCanvas();
-            }
-            // --- Resizing Logic ---
-            else if (isResizing && selectedElement) {
-                 const orig = selectedElement.originalRect; if (!orig) return;
-
-                 // Calculate potential new bounds based on raw mouse delta
-                 let potentialX = orig.x, potentialY = orig.y, potentialW = orig.width, potentialH = orig.height;
-                 const rawDx = x - dragStartX;
-                 const rawDy = y - dragStartY;
-
-                 switch (resizeHandleType) {
-                     case 'br': potentialW = orig.width + rawDx; potentialH = orig.height + rawDy; break;
-                     case 'bl': potentialX = orig.x + rawDx; potentialW = orig.width - rawDx; potentialH = orig.height + rawDy; break;
-                     case 'tr': potentialY = orig.y + rawDy; potentialW = orig.width + rawDx; potentialH = orig.height - rawDy; break;
-                     case 'tl': potentialX = orig.x + rawDx; potentialY = orig.y + rawDy; potentialW = orig.width - rawDx; potentialH = orig.height - rawDy; break;
-                 }
-
-                 // Apply snapping to the corner being dragged
-                 let finalX = potentialX, finalY = potentialY, finalW = potentialW, finalH = potentialH;
-                 if (snapToGrid) {
-                     switch (resizeHandleType) {
-                         case 'br':
-                             finalW = snapToGridValue(potentialX + potentialW) - finalX;
-                             finalH = snapToGridValue(potentialY + potentialH) - finalY;
-                             break;
-                         case 'bl':
-                             finalX = snapToGridValue(potentialX);
-                             finalW = (orig.x + orig.width) - finalX; // Calculate width based on fixed right edge
-                             finalH = snapToGridValue(potentialY + potentialH) - finalY;
-                             break;
-                         case 'tr':
-                             finalW = snapToGridValue(potentialX + potentialW) - finalX;
-                             finalY = snapToGridValue(potentialY);
-                             finalH = (orig.y + orig.height) - finalY; // Calculate height based on fixed bottom edge
-                             break;
-                         case 'tl':
-                             finalX = snapToGridValue(potentialX);
-                             finalY = snapToGridValue(potentialY);
-                             finalW = (orig.x + orig.width) - finalX;
-                             finalH = (orig.y + orig.height) - finalY;
-                             break;
+                     dragInfo.element.x = newX;
+                     dragInfo.element.y = newY;
+                     // For circle, cx/cy are the center, x/y are top-left for consistency in storage
+                     if (dragInfo.element.type === 'circle' || dragInfo.element.type === 'filled-circle') {
+                          dragInfo.element.cx = dragInfo.element.x + dragInfo.element.radius;
+                          dragInfo.element.cy = dragInfo.element.y + dragInfo.element.radius;
                      }
                  }
 
-                 // Round final values if not snapping
-                 if (!snapToGrid) {
-                     finalX = Math.round(finalX); finalY = Math.round(finalY);
-                     finalW = Math.round(finalW); finalH = Math.round(finalH);
+
+                 // Update properties panel if the dragged element is the selected one
+                 if (dragInfo.element === selectedElement) {
+                     updatePropertiesPanel();
                  }
 
+                 draw(); // Redraw to show the element moving
+             }
+         });
 
-                 if (finalW >= 1 && finalH >= 1) {
-                     selectedElement.x = finalX; selectedElement.y = finalY;
-                     selectedElement.width = finalW; selectedElement.height = finalH;
-                     updatePropertiesPanel(); updateSelectionBox(); redrawCanvas();
+         canvas.addEventListener('mousedown', (event) => {
+             const pos = getMousePos(event);
+
+             if (selectedTool === 'select') {
+                 // Check if clicking on an existing element (iterate in reverse order for layers)
+                 let clickedElement = null;
+                 for (let i = elements.length - 1; i >= 0; i--) {
+                     if (isPointInElement(pos.x, pos.y, elements[i])) {
+                         clickedElement = elements[i];
+                         break;
+                     }
                  }
-            }
-        }
-        function handleMouseUp(event) {
-            if (isDragging || isResizing) {
-                event.preventDefault?.();
-                // Save state *after* drag/resize is complete
-                saveState();
-                generateMicroPythonCode(); // Generate code after final position is set
-            }
-            if (isResizing && selectedElement) delete selectedElement.originalRect;
-            if (isDragging && selectedElement) delete selectedElement.dragInitialState;
-            isDragging = false; isResizing = false; resizeHandleType = null;
-            canvasContainer.style.cursor = selectedElement ? (selectedElement.locked ? 'not-allowed' : 'move') : 'default';
-        }
 
-        // --- Property Panel Updates ---
-        function handlePropertyChange(event) {
-             if (!selectedElement || selectedElement.locked) return; // Ignore if locked
+                 if (clickedElement) {
+                     selectElement(clickedElement);
+                     // Start drag operation
+                     dragInfo = {
+                         element: clickedElement,
+                         // Store offset from top-left for simple drag
+                         offsetX: pos.x - clickedElement.x,
+                         offsetY: pos.y - clickedElement.y,
+                         startX: clickedElement.x, // Store initial position
+                         startY: clickedElement.y,
+                         type: 'move' // Could add 'resize' later
+                     };
+                      // For line, use x1, y1 as the origin for drag calculation
+                      if (clickedElement.type === 'line') {
+                           dragInfo.offsetX = pos.x - clickedElement.x1;
+                           dragInfo.offsetY = pos.y - clickedElement.y1;
+                           dragInfo.startX = clickedElement.x1;
+                           dragInfo.startY = clickedElement.y1;
+                      } else if (clickedElement.type === 'circle' || clickedElement.type === 'filled-circle') {
+                           // Use the stored x,y (top-left of bounding box) for drag
+                           dragInfo.offsetX = pos.x - clickedElement.x;
+                           dragInfo.offsetY = pos.y - clickedElement.y;
+                           dragInfo.startX = clickedElement.x;
+                           dragInfo.startY = clickedElement.y;
+                      }
 
-            const input = event.target;
-            const propName = input.dataset.prop;
-            if (!propName) return;
+                 } else {
+                     // Clicked outside elements, deselect
+                     selectElement(null);
+                     dragInfo = null; // No drag started
+                 }
+             } else if (selectedTool === 'pixel') {
+                 elements.push({ type: 'pixel', x: pos.x, y: pos.y, color: 1 });
+                 draw();
+                 updateElementList();
+             } else if (selectedTool === 'eraser') {
+                 // Remove pixel if one exists at this location
+                 const initialLength = elements.length;
+                 elements = elements.filter(el =>
+                     !(el.type === 'pixel' && el.x === pos.x && el.y === pos.y)
+                 );
+                  if (elements.length < initialLength) {
+                     draw();
+                     updateElementList();
+                     // If the deleted element was selected, deselect it
+                     if (selectedElement && selectedElement.type === 'pixel' && selectedElement.x === pos.x && selectedElement.y === pos.y) {
+                         selectElement(null);
+                     }
+                 }
+             } else if (selectedTool === 'sprite' && currentSpriteData && currentSpriteName && spriteLibrary[currentSpriteName]) {
+                  // Place the currently saved sprite
+                  const sprite = spriteLibrary[currentSpriteName];
+                  elements.push({ type: 'sprite', x: pos.x, y: pos.y, spriteDataRef: currentSpriteName, color: 1 }); // Sprites use a reference and a color tint
+                  draw();
+                  updateElementList();
+             }
+             else {
+                 // Start drawing a shape
+                 drawingShape = {
+                     type: selectedTool, // e.g., 'line', 'rect', 'circle', 'filled-rect', 'filled-circle', 'text' (temp)
+                     startX: pos.x,
+                     startY: pos.y,
+                     currentX: pos.x,
+                     currentY: pos.y,
+                     color: parseInt(propColorSelect.value), // Get color from controls
+                     fill: selectedTool.startsWith('filled-')
+                 };
 
-            // Handle lock/visible toggles separately
-            if (propName === 'toggleVisible') {
-                selectedElement.visible = !selectedElement.visible;
-                updatePropertiesPanel(); // Update icon state
-                redrawAll(); // Update canvas overlay
-                saveState(); // Save visibility change
-                generateMicroPythonCode(); // Update code (might comment out element)
-                return;
-            }
-             if (propName === 'toggleLocked') {
-                selectedElement.locked = !selectedElement.locked;
-                updatePropertiesPanel(); // Update icon state
-                redrawAll(); // Update canvas overlay
-                saveState(); // Save lock change
-                // No need to regenerate code for lock change
-                return;
-            }
-             if (propName === 'toggleAnimate') { /* ... (same) ... */ }
+                 // Handle Text tool start
+                 if (selectedTool === 'text') {
+                      // For text, mousedown just sets the position. The element is added on mouseup or a different action.
+                      // Let's simplify: mousedown places text immediately.
+                     const text = propTextContentInput.value || "Hello";
+                     if (text) {
+                         elements.push({ type: 'text', x: pos.x, y: pos.y, text: text, color: parseInt(propColorSelect.value) });
+                         draw();
+                         updateElementList();
+                     }
+                     drawingShape = null; // Text is placed instantly, not drawn with drag
+                 }
+             }
+         });
 
-            // --- Standard property changes ---
-            let value;
-            // ... (value parsing logic - same as before) ...
-             if (input.type === 'checkbox') { value = input.checked; }
-            else if (input.type === 'number') {
-                value = input.value === '' ? null : parseInt(input.value, 10);
-                if (value !== null && isNaN(value)) { value = 0; }
-                if ((propName === 'r' || propName === 'rx' || propName === 'ry') && value !== null && value < 1) value = 1;
-                if (propName === 'radius' && value !== null && value < 0) value = 0;
-                if ((propName === 'width' || propName === 'height') && value !== null && value < 1 && ['rectangle', 'text', 'round_rect'].includes(selectedElement.type)) value = 1;
-                if (propName === 'animSpeed' && value !== null && value < 0.1) value = 0.1;
-            } else if (propName === 'points') {
-                 value = parsePointsString(input.value);
-                 if (!Array.isArray(value)) { input.value = formatPointsString(selectedElement[propName]); return; }
-            } else if (propName === 'iconName') {
-                 value = input.value;
-                 const iconData = presetIcons[value];
-                 if(iconData) { selectedElement.width = iconData.width; selectedElement.height = iconData.height; }
-            } else { value = input.value; }
+         canvas.addEventListener('mouseup', (event) => {
+             const pos = getMousePos(event);
 
+             if (dragInfo) {
+                 // End drag operation
+                 dragInfo = null;
+             } else if (drawingShape && drawingShape.type !== 'text') {
+                 // End drawing a shape and add it to elements
+                 const startX = drawingShape.startX;
+                 const startY = drawingShape.startY;
+                 const endX = pos.x; // Use final mouse position
+                 const endY = pos.y;
+                 const color = drawingShape.color;
+                 const fill = drawingShape.fill;
 
-            if (selectedElement.hasOwnProperty(propName)) { selectedElement[propName] = value; }
-            else { console.warn(`Property ${propName} not found on selected element type ${selectedElement.type}.`); return; }
+                 let newElement = null;
 
-            updateElementBounds(selectedElement);
-            redrawAll(); // Use redrawAll for overlays
-            saveState(); // Save property change
-            generateMicroPythonCode();
-        }
+                 switch (drawingShape.type) {
+                     case 'line':
+                         newElement = { type: 'line', x1: startX, y1: startY, x2: endX, y2: endY, color: color };
+                         break;
+                     case 'rect':
+                     case 'filled-rect':
+                         // Ensure width and height are positive, adjust x/y if dragging left/up
+                         const x = Math.min(startX, endX);
+                         const y = Math.min(startY, endY);
+                         const width = Math.abs(startX - endX) + 1; // +1 to include the end pixel
+                         const height = Math.abs(startY - endY) + 1; // +1 to include the end pixel
+                         newElement = { type: 'rect', x: x, y: y, width: width, height: height, color: color, fill: fill };
+                         break;
+                      case 'circle':
+                      case 'filled-circle':
+                          // Define circle by center and radius. Let's treat start as center and end as a point on circumference.
+                          // Or, treat start as one corner of bounding box, end as opposite?
+                          // Let's simplify: Start = Center, End determines Radius.
+                          const dx = endX - startX;
+                          const dy = endY - startY;
+                          const radius = Math.round(Math.sqrt(dx * dx + dy * dy));
+                           // Store center (cx, cy) and radius (r). Also store top-left (x,y) for consistent property panel/drag
+                           newElement = {
+                                type: 'circle',
+                                cx: startX,
+                                cy: startY,
+                                radius: radius,
+                                x: startX - radius, // Top-left of bounding box
+                                y: startY - radius, // Top-left of bounding box
+                                color: color,
+                                fill: fill
+                           };
+                          break;
+                 }
 
-        // --- Button Click Handlers ---
-        addElementBtn.addEventListener('click', () => { /* ... (calls saveState) ... */
-            const type = addElementTypeSelect.value;
-            if (type === 'text') {
-                modalTextInput.value = 'Text'; textModal.style.display = 'block'; modalTextInput.focus(); modalTextInput.select();
-            } else {
-                const newElement = createElement(type);
-                if (newElement) {
-                    elements.push(newElement); selectElement(newElement); redrawAll(); saveState(); generateMicroPythonCode();
-                }
-            }
-        });
-        modalConfirmBtn.addEventListener('click', () => { /* ... (calls saveState) ... */
-            const text = modalTextInput.value || 'Text';
-            const newTextElement = createElement('text', { text: text });
-            if (newTextElement) { elements.push(newTextElement); selectElement(newTextElement); redrawAll(); saveState(); generateMicroPythonCode(); }
-            textModal.style.display = 'none';
-        });
-        closeModalBtn.addEventListener('click', () => { textModal.style.display = 'none'; });
-        window.addEventListener('click', (event) => { if (event.target == textModal) { textModal.style.display = 'none'; } });
-        deleteBtn.addEventListener('click', deleteSelectedElement); // Already saves state
-        saveBtn.addEventListener('click', saveDesign);
-        loadBtn.addEventListener('click', loadDesign);
-        undoBtn.addEventListener('click', undo);
-        redoBtn.addEventListener('click', redo);
+                 if (newElement) {
+                     elements.push(newElement);
+                     selectElement(newElement); // Select the newly created element
+                     updateElementList();
+                 }
 
-        // --- Layer Controls ---
-        function moveElement(direction) {
-            if (!selectedElement) return;
-            const index = elements.findIndex(el => el.id === selectedElement.id);
-            if (index === -1) return;
+                 drawingShape = null; // Stop drawing mode
+                 draw(); // Redraw with the finished shape
+             }
+         });
 
-            let newIndex = index;
-            switch (direction) {
-                case 'forward': newIndex = Math.min(elements.length - 1, index + 1); break;
-                case 'backward': newIndex = Math.max(0, index - 1); break;
-                case 'front': newIndex = elements.length - 1; break;
-                case 'back': newIndex = 0; break;
-            }
+         canvas.addEventListener('mouseout', (event) => {
+             mouseCoordsDiv.textContent = `(0, 0)`; // Reset coords when mouse leaves
+         });
 
-            if (newIndex !== index) {
-                // Remove element and insert at new position
-                const [movedElement] = elements.splice(index, 1);
-                elements.splice(newIndex, 0, movedElement);
-                redrawAll();
-                saveState();
-                generateMicroPythonCode();
-                updatePropertiesPanel(); // Update button disabled states
-            }
-        }
-        bringForwardBtn.addEventListener('click', () => moveElement('forward'));
-        sendBackwardBtn.addEventListener('click', () => moveElement('backward'));
-        bringFrontBtn.addEventListener('click', () => moveElement('front'));
-        sendBackBtn.addEventListener('click', () => moveElement('back'));
+         // --- Property Panel Event Listeners ---
+         propXInput.addEventListener('change', (event) => {
+             if (selectedElement) {
+                 const newX = parseInt(event.target.value);
+                  // For circles, changing X needs to update cx and the stored x
+                  if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') {
+                      const dx = newX - selectedElement.x; // Change in x
+                      selectedElement.x = newX;
+                      selectedElement.cx += dx;
+                  } else if (selectedElement.type === 'line') {
+                      // For lines, changing X needs to move both points
+                       const dx = newX - selectedElement.x1;
+                       selectedElement.x1 = newX;
+                       selectedElement.x2 += dx;
+                  }
+                 else {
+                    selectedElement.x = newX;
+                 }
+                 draw();
+                 updateElementList(); // Update position in list label
+             }
+         });
 
-        // --- Copy / Paste ---
-        function copyElement() {
+         propYInput.addEventListener('change', (event) => {
             if (selectedElement) {
-                copiedElementData = deepCopyElements([selectedElement])[0];
-                pasteBtn.disabled = false; // Enable paste button
-                 console.log("Copied:", copiedElementData);
-            }
-        }
-        function pasteElement() {
-            if (copiedElementData) {
-                // Create a new element based on copied data, but with new ID and offset position
-                const pasteOptions = {
-                    ...copiedElementData, // Spread existing properties
-                    id: Date.now() + Math.random(), // New unique ID
-                    x: (copiedElementData.x || 0) + 5, // Offset x
-                    y: (copiedElementData.y || 0) + 5, // Offset y
-                    locked: false, // Pasted element is not locked initially
-                    isAnimating: false // Pasted element is not animating initially
-                };
-                 // Adjust center coordinates if applicable
-                 if (pasteOptions.hasOwnProperty('cx')) pasteOptions.cx += 5;
-                 if (pasteOptions.hasOwnProperty('cy')) pasteOptions.cy += 5;
-                 // Adjust line/triangle/polygon points
-                 if (pasteOptions.type === 'line') { pasteOptions.x2 += 5; pasteOptions.y2 += 5; }
-                 if (pasteOptions.type === 'triangle') { pasteOptions.x0 += 5; pasteOptions.y0 += 5; pasteOptions.x1 += 5; pasteOptions.y1 += 5; pasteOptions.x2 += 5; pasteOptions.y2 += 5; }
-                 if (pasteOptions.type === 'polygon' && Array.isArray(pasteOptions.points)) { pasteOptions.points = pasteOptions.points.map(p => [p[0]+5, p[1]+5]); }
+                 const newY = parseInt(event.target.value);
+                 // For circles, changing Y needs to update cy and the stored y
+                 if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') {
+                     const dy = newY - selectedElement.y; // Change in y
+                     selectedElement.y = newY;
+                     selectedElement.cy += dy;
+                 } else if (selectedElement.type === 'line') {
+                       // For lines, changing Y needs to move both points
+                       const dy = newY - selectedElement.y1;
+                       selectedElement.y1 = newY;
+                       selectedElement.y2 += dy;
+                 }
+                 else {
+                    selectedElement.y = newY;
+                 }
 
+                 draw();
+                 updateElementList(); // Update position in list label
+             }
+         });
 
-                const newElement = createElement(pasteOptions.type, pasteOptions);
-                if (newElement) {
-                    elements.push(newElement);
-                    selectElement(newElement);
-                    redrawAll();
-                    saveState();
-                    generateMicroPythonCode();
+         propTextContentInput.addEventListener('change', (event) => {
+             if (selectedElement && selectedElement.type === 'text') {
+                 selectedElement.text = event.target.value;
+                 draw();
+             }
+         });
+
+         propWidthInput.addEventListener('change', (event) => {
+             if (selectedElement && (selectedElement.type === 'rect' || selectedElement.type === 'filled-rect')) {
+                 selectedElement.width = parseInt(event.target.value);
+                 draw();
+             }
+         });
+
+         propHeightInput.addEventListener('change', (event) => {
+             if (selectedElement && (selectedElement.type === 'rect' || selectedElement.type === 'filled-rect')) {
+                 selectedElement.height = parseInt(event.target.value);
+                 draw();
+             }
+         });
+
+         propRadiusInput.addEventListener('change', (event) => {
+             if (selectedElement && (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle')) {
+                 const newRadius = parseInt(event.target.value);
+                 selectedElement.radius = newRadius;
+                 // Update stored x,y (top-left) based on new radius
+                 selectedElement.x = selectedElement.cx - newRadius;
+                 selectedElement.y = selectedElement.cy - newRadius;
+                 draw();
+             }
+         });
+
+         propColorSelect.addEventListener('change', (event) => {
+             if (selectedElement) {
+                 selectedElement.color = parseInt(event.target.value);
+                 draw();
+             }
+         });
+
+         propFillCheckbox.addEventListener('change', (event) => {
+             if (selectedElement && (selectedElement.type === 'rect' || selectedElement.type === 'circle')) {
+                 selectedElement.fill = event.target.checked;
+                 // Change type name in UI if needed (e.g., rect -> filled-rect)
+                 if (selectedElement.type === 'rect' && selectedElement.fill) selectedElement.type = 'filled-rect';
+                 if (selectedElement.type === 'filled-rect' && !selectedElement.fill) selectedElement.type = 'rect';
+                 if (selectedElement.type === 'circle' && selectedElement.fill) selectedElement.type = 'filled-circle';
+                 if (selectedElement.type === 'filled-circle' && !selectedElement.fill) selectedElement.type = 'circle';
+                 updatePropertiesPanel(); // Update type name shown
+                 draw();
+             }
+         });
+
+         deleteElementButton.addEventListener('click', () => {
+            if (selectedElement) {
+                const index = elements.indexOf(selectedElement);
+                if (index !== -1) {
+                    elements.splice(index, 1);
+                    selectElement(null); // Deselect
+                    draw();
+                    updateElementList();
                 }
             }
-        }
-        copyBtn.addEventListener('click', copyElement);
-        pasteBtn.addEventListener('click', pasteElement);
+         });
 
-        // --- View Controls ---
-        function applyZoom() {
-             canvasContainer.style.transform = `scale(${currentZoom})`;
-             // Adjust outer container size to fit scaled content
-             canvasOuterContainer.style.width = `${SCREEN_WIDTH * CANVAS_SCALE_X * currentZoom}px`;
-             canvasOuterContainer.style.height = `${SCREEN_HEIGHT * CANVAS_SCALE_Y * currentZoom}px`;
-             zoomLevelSpan.textContent = `${Math.round(currentZoom * 100)}%`;
-             // Update grid background size based on zoom
-             drawGrid();
-             // Update selection box and overlays based on zoom
-             updateSelectionBox();
-             drawElementOverlays();
-        }
-        zoomInBtn.addEventListener('click', () => { currentZoom = Math.min(4, currentZoom + 0.25); applyZoom(); });
-        zoomOutBtn.addEventListener('click', () => { currentZoom = Math.max(0.25, currentZoom - 0.25); applyZoom(); });
+         // --- Toolbar Button Event Listeners ---
+         toolButtons.forEach(button => {
+             if (button.id.startsWith('tool-')) {
+                 button.addEventListener('click', () => {
+                     selectTool(button.id.replace('tool-', ''));
+                 });
+             }
+         });
 
-        gridToggle.addEventListener('change', (e) => { showGrid = e.target.checked; canvasContainer.classList.toggle('show-grid', showGrid); drawGrid(); });
-        snapToggle.addEventListener('change', (e) => { snapToGrid = e.target.checked; });
+         // --- Grid/Snap Event Listeners ---
+         showGridCheckbox.addEventListener('change', (event) => {
+             showGrid = event.target.checked;
+             draw();
+         });
+          snapGridCheckbox.addEventListener('change', (event) => {
+             snapGrid = event.target.checked;
+             // No redraw needed, snap applies during mouse events
+         });
 
-        function setDisplaySize(sizeValue) {
-            const dimensions = sizeValue.split('x');
-            SCREEN_WIDTH = parseInt(dimensions[0], 10);
-            SCREEN_HEIGHT = parseInt(dimensions[1], 10);
-            // Update canvas element size
-            canvas.width = SCREEN_WIDTH;
-            canvas.height = SCREEN_HEIGHT;
-            // Update CSS variables for grid scaling (if needed, though base scale might be sufficient)
-            // document.documentElement.style.setProperty('--canvas-scale-x', CANVAS_SCALE_X);
-            // document.documentElement.style.setProperty('--canvas-scale-y', CANVAS_SCALE_Y);
-            // Redraw everything with new dimensions
-            redrawAll();
-            applyZoom(); // Reapply zoom to new size
-            generateMicroPythonCode(); // Update code defaults
-        }
-        displaySizeSelect.addEventListener('change', (e) => setDisplaySize(e.target.value));
 
-        // --- Animation Control ---
-        function startAnimation(element) { /* ... (same) ... */ }
-        function stopAnimation(element) { /* ... (same) ... */ }
-        function toggleAnimation(element) { /* ... (same) ... */ }
-        function playAnimationLoop() { /* ... (same, updates button state) ... */
-             if (isPlaying) return; isPlaying = true;
-             playBtn.classList.add('bg-gray-400', 'hover:bg-gray-400'); playBtn.disabled = true; playBtn.innerHTML = '<i class="fas fa-play mr-1"></i>Play';
-             pauseBtn.classList.remove('bg-gray-400', 'hover:bg-gray-400'); pauseBtn.disabled = false; pauseBtn.innerHTML = '<i class="fas fa-pause mr-1"></i>Pause';
-             function loop() { if (!isPlaying) return; animateStep(); animationFrameId = requestAnimationFrame(loop); } loop();
-        }
-        function pauseAnimationLoop() { /* ... (same, updates button state) ... */
-             isPlaying = false; if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
-             playBtn.classList.remove('bg-gray-400', 'hover:bg-gray-400'); playBtn.disabled = false; playBtn.innerHTML = '<i class="fas fa-play mr-1"></i>Play';
-             pauseBtn.classList.add('bg-gray-400', 'hover:bg-gray-400'); pauseBtn.disabled = true; pauseBtn.innerHTML = '<i class="fas fa-pause mr-1"></i>Pause';
-             updatePropertiesPanel(); // Update individual element buttons
-        }
-        function animateStep() { /* ... (same) ... */ }
-        function updateElementCoordsFromPos(element, dx, dy) { /* ... (same) ... */ }
-        playBtn.addEventListener('click', playAnimationLoop);
-        pauseBtn.addEventListener('click', pauseAnimationLoop);
+         // --- Layer Controls ---
+         moveUpButton.addEventListener('click', () => {
+             if (selectedElement) {
+                 const index = elements.indexOf(selectedElement);
+                 if (index > 0) {
+                     // Swap elements
+                     [elements[index], elements[index - 1]] = [elements[index - 1], elements[index]];
+                     updateElementList();
+                     draw(); // Redraw with new layer order
+                 }
+             }
+         });
 
-        // --- Keyboard Shortcuts ---
-        document.addEventListener('keydown', (e) => {
-            // Ignore shortcuts if focus is inside an input/textarea
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-                return;
-            }
+         moveDownButton.addEventListener('click', () => {
+             if (selectedElement) {
+                 const index = elements.indexOf(selectedElement);
+                 if (index < elements.length - 1) {
+                     // Swap elements
+                     [elements[index], elements[index + 1]] = [elements[index + 1], elements[index]];
+                     updateElementList();
+                     draw(); // Redraw with new layer order
+                 }
+             }
+         });
 
-            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-            const ctrlCmd = isMac ? e.metaKey : e.ctrlKey;
 
-            if (e.key === 'Delete' || e.key === 'Backspace') {
-                if (selectedElement && !deleteBtn.disabled) {
-                    e.preventDefault(); deleteSelectedElement();
+         // --- Animation Preview ---
+         function playAnimationPreview() {
+            if (!selectedElement || !selectedElement.animation) return;
+
+            const anim = selectedElement.animation;
+            anim.progress = 0; // Start at step 0
+            anim.startTime = performance.now(); // Record start time
+            anim.startX = selectedElement.x; // Store current pos as start for animation
+            anim.startY = selectedElement.y;
+
+            // Make a deep copy of the initial state of all elements for consistent preview
+             const initialElementsState = JSON.parse(JSON.stringify(elements));
+
+            function animate(currentTime) {
+                if (!anim.startTime) anim.startTime = currentTime;
+
+                const elapsedTime = currentTime - anim.startTime;
+                 // Calculate which step we are at based on elapsed time and total steps (assume ~30-60fps)
+                 // A simpler approach is to just increment step per frame
+                 anim.progress++;
+
+
+                if (anim.progress <= anim.steps) {
+                    // Restore initial state, then update the selected element's position for this frame
+                     elements = JSON.parse(JSON.stringify(initialElementsState)); // Start from the beginning state
+                     const elementToAnimate = elements.find(el => el.id === selectedElement.id); // Find the animating element in the current frame's state copy
+
+                     if (elementToAnimate) {
+                         const currentStep = anim.progress;
+                         const totalSteps = anim.steps;
+
+                          // Update position based on progress
+                         elementToAnimate.x = anim.startX + (anim.endX - anim.startX) * (currentStep / totalSteps);
+                         elementToAnimate.y = anim.startY + (anim.endY - anim.startY) * (currentStep / totalSteps);
+
+                          // Update element._currentRenderX/Y to the new position
+                          elementToAnimate._currentRenderX = elementToAnimate.x;
+                          elementToAnimate._currentRenderY = elementToAnimate.y;
+
+                         // Update properties panel during animation? Probably too distracting.
+                     } else {
+                          console.error("Animating element not found in frame state copy!");
+                          stopAnimationPreview();
+                          return;
+                     }
+
+
+                    draw(); // Redraw the canvas for this frame
+
+                    animationFrameId = requestAnimationFrame(animate);
+                } else {
+                    // Animation finished
+                    stopAnimationPreview();
+                    // Optionally reset element position to end state or original start state
+                     // Let's reset to the state *before* animation started for clarity in the editor
+                    elements = JSON.parse(JSON.stringify(initialElementsState));
+                     draw();
                 }
-            } else if (ctrlCmd && e.key.toLowerCase() === 'c') {
-                 if (selectedElement && !copyBtn.disabled) { e.preventDefault(); copyElement(); }
-            } else if (ctrlCmd && e.key.toLowerCase() === 'v') {
-                 if (!pasteBtn.disabled) { e.preventDefault(); pasteElement(); }
-            } else if (ctrlCmd && e.key.toLowerCase() === 'z') {
-                 if (!undoBtn.disabled) { e.preventDefault(); undo(); }
-            } else if (ctrlCmd && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
-                 if (!redoBtn.disabled) { e.preventDefault(); redo(); }
-            } else if (ctrlCmd && e.key.toLowerCase() === 's') {
-                 e.preventDefault(); saveDesign();
-            } else if (ctrlCmd && e.key.toLowerCase() === 'o') {
-                 e.preventDefault(); loadDesign(); // Might be blocked by browser
-            } else if (e.key.toLowerCase() === 'p') {
-                 e.preventDefault();
-                 if (isPlaying) pauseAnimationLoop(); else playAnimationLoop();
             }
-            // Add shortcuts for layering? Maybe Alt + Up/Down?
-        });
 
-        // --- Code Generation ---
-        function generateMicroPythonCode() {
-             let iconDefs = ''; let iconVars = new Set();
-             let drawingCommands = '';
+             playAnimationButton.disabled = true;
+             stopAnimationButton.disabled = false;
+            animationFrameId = requestAnimationFrame(animate);
+         }
 
-             // Filter out hidden elements before generating commands
-             const visibleElements = elements.filter(el => el && el.visible);
+         function stopAnimationPreview() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+                // Reset the animated element's position in the main elements array
+                if (selectedElement && selectedElement.animation) {
+                     // Restore the original position before animation started
+                     selectedElement.x = selectedElement.animation.startX;
+                     selectedElement.y = selectedElement.animation.startY;
+                     delete selectedElement.animation.progress; // Remove progress state
+                     delete selectedElement.animation.startTime;
+                     delete selectedElement._currentRenderX; // Clear rendering position override
+                     delete selectedElement._currentRenderY;
+                     delete selectedElement.animation.startX; // Remove start pos stored for anim
+                     delete selectedElement.animation.startY;
+                }
+                 draw(); // Redraw to show static state
+                 playAnimationButton.disabled = !selectedElement || !selectedElement.animation;
+                 stopAnimationButton.disabled = true;
+            }
+         }
 
-             visibleElements.forEach(el => {
-                const color = el.color ?? 1; const fill = el.fill ?? false;
-                try {
-                    switch (el.type) {
-                        // ... (Cases for rect, line, text, circle, triangle, ellipse, polygon, round_rect - same as before, ensure Math.round) ...
-                        case 'rectangle': drawingCommands += fill ? `display.fill_rect(${Math.round(el.x)}, ${Math.round(el.y)}, ${Math.round(el.width)}, ${Math.round(el.height)}, ${color})\n` : `display.rect(${Math.round(el.x)}, ${Math.round(el.y)}, ${Math.round(el.width)}, ${Math.round(el.height)}, ${color})\n`; break;
-                        case 'line': drawingCommands += `display.line(${Math.round(el.x)}, ${Math.round(el.y)}, ${Math.round(el.x2)}, ${Math.round(el.y2)}, ${color})\n`; break;
-                        case 'text': const escapedText = (el.text || '').replace(/"/g, '\\"'); drawingCommands += `display.text("${escapedText}", ${Math.round(el.x)}, ${Math.round(el.y)}, ${color})\n`; break;
-                        case 'circle': drawingCommands += `display.circle(${Math.round(el.cx)}, ${Math.round(el.cy)}, ${Math.round(el.r)}, ${color}, fill=${fill})\n`; break;
-                        case 'triangle': drawingCommands += `display.triangle(${Math.round(el.x0)}, ${Math.round(el.y0)}, ${Math.round(el.x1)}, ${Math.round(el.y1)}, ${Math.round(el.x2)}, ${Math.round(el.y2)}, ${color}, fill=${fill})\n`; break;
-                        case 'ellipse': drawingCommands += `display.ellipse(${Math.round(el.cx)}, ${Math.round(el.cy)}, ${Math.round(el.rx)}, ${Math.round(el.ry)}, ${color}, fill=${fill})\n`; break;
-                        case 'polygon': const pointsListStr = el.points.map(p => `(${Math.round(p[0])},${Math.round(p[1])})`).join(', '); drawingCommands += `display.polygon([${pointsListStr}], ${color}, fill=${fill})\n`; break;
-                        case 'round_rect': drawingCommands += `display.round_rect(${Math.round(el.x)}, ${Math.round(el.y)}, ${Math.round(el.width)}, ${Math.round(el.height)}, ${color}, filled=${fill}, radius=${Math.round(el.radius)})\n`; break;
-                        case 'icon':
-                            const icon = presetIcons[el.iconName];
-                            if (icon) {
-                                const varName = `icon_${el.iconName}`;
-                                if (!iconVars.has(varName)) {
-                                    // Generate bytearray definition (MONO_VLSB)
-                                    let byteString = 'bytearray(b\''; let byteValue = 0; let bitCount = 0;
-                                    const totalBits = icon.width * icon.height;
-                                    for (let i = 0; i < totalBits; i++) {
-                                        // Calculate byte index and bit position within the byte for VLSB
-                                        const byteIndex = Math.floor(i / 8);
-                                        const bitInByteIndex = i % 8;
-                                        // Calculate corresponding index in the flat data array (row-major)
-                                        const dataIndex = Math.floor(i / icon.width) * icon.width + (i % icon.width);
 
-                                        if (icon.data[dataIndex] === 1) {
-                                             byteValue |= (1 << bitInByteIndex);
-                                        }
-                                        bitCount++;
-                                        if (bitCount === 8 || i === totalBits - 1) { // End of byte or end of data
-                                            byteString += `\\x${byteValue.toString(16).padStart(2, '0')}`;
-                                            byteValue = 0; bitCount = 0;
-                                        }
-                                    }
-                                    byteString += '\')';
-                                    iconDefs += `\n# Icon: ${el.iconName}\n`;
-                                    iconDefs += `${varName}_data = ${byteString}\n`;
-                                    iconDefs += `${varName}_fb = framebuf.FrameBuffer(${varName}_data, ${icon.width}, ${icon.height}, framebuf.MONO_VLSB)\n`;
-                                    iconVars.add(varName);
+         addAnimationButton.addEventListener('click', () => {
+             if (selectedElement) {
+                 selectedElement.animation = {
+                     type: 'path', // Only supporting path for now
+                     startX: selectedElement.x,
+                     startY: selectedElement.y,
+                     endX: parseInt(animEndXInput.value),
+                     endY: parseInt(animEndYInput.value),
+                     steps: parseInt(animStepsInput.value)
+                 };
+                 // Assign a unique ID to the element so we can find it in the copied state during animation
+                 if (!selectedElement.id) {
+                      selectedElement.id = Date.now() + Math.random();
+                 }
+                 updateAnimationPanel();
+                 console.log(`Animation added to element ${selectedElement.type} at (${selectedElement.x},${selectedElement.y})`);
+             }
+         });
+
+         removeAnimationButton.addEventListener('click', () => {
+             if (selectedElement && selectedElement.animation) {
+                 stopAnimationPreview(); // Stop if playing
+                 delete selectedElement.animation;
+                 //delete selectedElement.id; // Remove ID if no longer needed? Maybe keep ID for other purposes later.
+                 updateAnimationPanel();
+                 console.log('Animation removed.');
+             }
+         });
+
+         playAnimationButton.addEventListener('click', playAnimationPreview);
+         stopAnimationButton.addEventListener('click', stopAnimationPreview);
+
+
+         // --- Sprite Editor Functions ---
+
+         function generateSpriteGrid(width, height) {
+            spriteEditorGridDiv.innerHTML = '';
+            spriteEditorGridDiv.style.gridTemplateColumns = `repeat(${width}, 1fr)`;
+            spriteEditorGridDiv.style.width = `${width * 16}px`; // Cell size + border
+            spriteEditorGridDiv.style.height = `${height * 16}px`;
+
+            currentSpriteData = [];
+            for (let y = 0; y < height; y++) {
+                currentSpriteData[y] = [];
+                for (let x = 0; x < width; x++) {
+                    currentSpriteData[y][x] = 0; // Initialize with 0 (off)
+                    const pixelDiv = document.createElement('div');
+                    pixelDiv.classList.add('pixel');
+                    pixelDiv.dataset.x = x;
+                    pixelDiv.dataset.y = y;
+                    pixelDiv.addEventListener('click', toggleSpritePixel);
+                    spriteEditorGridDiv.appendChild(pixelDiv);
+                }
+            }
+         }
+
+         function toggleSpritePixel(event) {
+            const x = parseInt(event.target.dataset.x);
+            const y = parseInt(event.target.dataset.y);
+            if (currentSpriteData && currentSpriteData[y] !== undefined && currentSpriteData[y][x] !== undefined) {
+                currentSpriteData[y][x] = 1 - currentSpriteData[y][x]; // Toggle 0 to 1, 1 to 0
+                event.target.classList.toggle('on', currentSpriteData[y][x] === 1);
+            }
+         }
+
+         function loadSpriteIntoEditor(spriteData, width, height) {
+             spriteEditorWidthInput.value = width;
+             spriteEditorHeightInput.value = height;
+             generateSpriteGrid(width, height); // Re-generate grid
+
+             // Load pixel data
+             for (let y = 0; y < height; y++) {
+                 for (let x = 0; x < width; x++) {
+                     if (spriteData[y] && spriteData[y][x] === 1) {
+                         const pixelDiv = spriteEditorGridDiv.querySelector(`.pixel[data-x="${x}"][data-y="${y}"]`);
+                         if (pixelDiv) {
+                             pixelDiv.classList.add('on');
+                             currentSpriteData[y][x] = 1; // Update state data
+                         }
+                     }
+                 }
+             }
+         }
+
+         function updateSpriteLibrarySelect() {
+             spriteLibrarySelect.innerHTML = '<option value="">-- Load Sprite --</option>';
+             for (const name in spriteLibrary) {
+                 const option = document.createElement('option');
+                 option.value = name;
+                 option.textContent = name;
+                 spriteLibrarySelect.appendChild(option);
+             }
+         }
+
+         // --- Sprite Editor Event Listeners ---
+         editSpriteButton.addEventListener('click', () => {
+             if (selectedElement && selectedElement.type === 'sprite' && spriteLibrary[selectedElement.spriteDataRef]) {
+                 const sprite = spriteLibrary[selectedElement.spriteDataRef];
+                 currentSpriteName = selectedElement.spriteDataRef;
+                 spriteNameInput.value = currentSpriteName;
+                 currentSpriteNameSpan.textContent = currentSpriteName;
+                 loadSpriteIntoEditor(sprite.data, sprite.width, sprite.height);
+             } else {
+                 // If no sprite element selected or sprite data missing, start a new default sprite
+                 currentSpriteName = 'new_sprite';
+                 spriteNameInput.value = currentSpriteName;
+                 currentSpriteNameSpan.textContent = currentSpriteName;
+                 generateSpriteGrid(8, 8); // Default size
+             }
+             spriteEditorModal.style.display = 'block';
+         });
+
+         closeModalSpan.addEventListener('click', () => {
+             spriteEditorModal.style.display = 'none';
+         });
+
+         window.addEventListener('click', (event) => {
+             if (event.target === spriteEditorModal) {
+                 spriteEditorModal.style.display = 'none';
+             }
+         });
+
+         resizeSpriteGridButton.addEventListener('click', () => {
+             const width = parseInt(spriteEditorWidthInput.value);
+             const height = parseInt(spriteEditorHeightInput.value);
+             if (width >= 1 && width <= 32 && height >= 1 && height <= 32) {
+                  // Preserve existing pixels if grid shrinks/grows
+                 const oldData = currentSpriteData;
+                 const oldWidth = oldData ? oldData[0].length : 0;
+                 const oldHeight = oldData ? oldData.length : 0;
+
+                 generateSpriteGrid(width, height); // Creates new empty grid and updates currentSpriteData
+
+                 // Copy old data to new grid
+                 if (oldData) {
+                      const copyWidth = Math.min(width, oldWidth);
+                      const copyHeight = Math.min(height, oldHeight);
+                      for(let y = 0; y < copyHeight; y++) {
+                           for(let x = 0; x < copyWidth; x++) {
+                                if (oldData[y] && oldData[y][x] === 1) {
+                                    currentSpriteData[y][x] = 1;
+                                     const pixelDiv = spriteEditorGridDiv.querySelector(`.pixel[data-x="${x}"][data-y="${y}"]`);
+                                     if(pixelDiv) pixelDiv.classList.add('on');
                                 }
-                                drawingCommands += `display.blit(${varName}_fb, ${Math.round(el.x)}, ${Math.round(el.y)})\n`;
-                            } else { drawingCommands += `# ERROR: Icon data not found for '${el.iconName}'\n`; }
-                            break;
-                        default: drawingCommands += `# Skipping unsupported element type: ${el.type}\n`;
-                    }
-                } catch (error) { drawingCommands += `# ERROR generating code for element ID ${el.id}: ${error.message}\n`; console.error("Error generating code for element:", el, error); }
+                           }
+                      }
+                 }
+
+             } else {
+                 alert('Sprite dimensions must be between 1 and 32.');
+             }
+         });
+
+         newSpriteButton.addEventListener('click', () => {
+             currentSpriteName = 'new_sprite_' + Date.now(); // Unique temp name
+             spriteNameInput.value = currentSpriteName;
+             currentSpriteNameSpan.textContent = currentSpriteName;
+             generateSpriteGrid(8, 8); // Default size
+         });
+
+         saveSpriteButton.addEventListener('click', () => {
+             const name = spriteNameInput.value.trim();
+             const width = parseInt(spriteEditorWidthInput.value);
+             const height = parseInt(spriteEditorHeightInput.value);
+
+             if (!name) {
+                 alert('Sprite name cannot be empty.');
+                 return;
+             }
+             if (!currentSpriteData || width <= 0 || height <= 0) {
+                 alert('Sprite data is empty.');
+                 return;
+             }
+
+             // Store sprite data and dimensions
+             spriteLibrary[name] = {
+                 name: name,
+                 width: width,
+                 height: height,
+                 data: JSON.parse(JSON.stringify(currentSpriteData)) // Store a copy
+             };
+             currentSpriteName = name; // Set current name to saved name
+             currentSpriteNameSpan.textContent = name;
+             updateSpriteLibrarySelect();
+             alert(`Sprite "${name}" saved!`);
+
+             // If the currently selected element is a sprite, update its reference if the name changed
+             if (selectedElement && selectedElement.type === 'sprite' && selectedElement.spriteDataRef !== name) {
+                  selectedElement.spriteDataRef = name;
+                  updatePropertiesPanel(); // Update sprite name shown in properties
+                  draw(); // Redraw to reflect potential size change if loaded sprite was different size
+             }
+         });
+
+         loadSpriteButton.addEventListener('click', () => {
+            const name = spriteLibrarySelect.value;
+            if (name && spriteLibrary[name]) {
+                const sprite = spriteLibrary[name];
+                currentSpriteName = name;
+                spriteNameInput.value = currentSpriteName;
+                currentSpriteNameSpan.textContent = currentSpriteName;
+                loadSpriteIntoEditor(sprite.data, sprite.width, sprite.height);
+            } else {
+                alert('Please select a sprite to load.');
+            }
+         });
+
+
+         // --- Code Generation ---
+
+         function generateMicroPythonCode() {
+            let code = `# MicroPython Code Generated by OLED UI Editor\n`;
+            code += `# This code is designed to work with an SSD1306 driver library compatible with framebuf.\n`;
+            code += `# e.g., https://github.com/micropython/micropython/blob/master/drivers/display/ssd1306.py\n\n`;
+
+            code += `# IMPORTANT: You need to have the ssd1306.py library file on your Pico.\n`;
+            code += `# Adjust the import and display setup below based on your connections (I2C or SPI) and pins.\n`;
+            code += `# Example for I2C:\n`;
+            code += `import machine\n`;
+            code += `import ssd1306\n`;
+            code += `import time\n\n`;
+            code += `# Example I2C setup (adjust pins and address as needed):\n`;
+            code += `i2c = machine.I2C(0, scl=machine.Pin(1), sda=machine.Pin(0))\n`;
+            code += `display = ssd1306.SSD1306_I2C(${DISPLAY_WIDTH}, ${DISPLAY_HEIGHT}, i2c)\n\n`;
+            code += `# Example for SPI (adjust pins and baudrate as needed):\n`;
+            code += `# import machine\n`;
+            code += `# import ssd1306\n`;
+            code += `# import time\n\n`;
+            code += `# spi = machine.SPI(0, baudrate=10000000, polarity=0, phase=0, sck=machine.Pin(2), mosi=machine.Pin(3))\n`;
+            code += `# dc = machine.Pin(4, machine.Pin.OUT)\n`;
+            code += `# res = machine.Pin(5, machine.Pin.OUT)\n`;
+            code += `# cs = machine.Pin(6, machine.Pin.OUT)\n`;
+            code += `# display = ssd1306.SSD1306_SPI(${DISPLAY_WIDTH}, ${DISPLAY_HEIGHT}, spi, dc, res, cs)\n\n`;
+
+
+            // Generate Sprite Data
+             code += `# --- Sprite Data ---\n`;
+             for (const name in spriteLibrary) {
+                 const sprite = spriteLibrary[name];
+                 const flatData = [];
+                 // Convert 2D array to byte array (assuming vertical bit packing as per framebuf)
+                 // Each byte represents 8 vertical pixels in a column
+                 for (let i = 0; i < sprite.width; i++) { // Iterate columns
+                     for (let j = 0; j < sprite.height; j += 8) { // Iterate down in 8-pixel chunks
+                         let byte = 0;
+                         for (let k = 0; k < 8; k++) {
+                             const pixelY = j + k;
+                              if (pixelY < sprite.height) {
+                                 if (sprite.data[pixelY] && sprite.data[pixelY][i] === 1) {
+                                     byte |= (1 << k); // Set bit k if pixel is on
+                                 }
+                              }
+                         }
+                         flatData.push(byte);
+                     }
+                 }
+                 code += `${name}_data = bytearray([${flatData.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]) # ${sprite.width}x${sprite.height}\n`;
+             }
+             code += `\n`;
+
+            // Generate initial elements data structure
+            code += `# --- Element Definitions (Initial State) ---\n`;
+            code += `elements_data = [\n`;
+            elements.forEach(el => {
+                code += `    {\n`;
+                code += `        "type": "${el.type}",\n`;
+                // Store base position (x,y or x1,y1 or cx,cy)
+                 if (el.type === 'line') {
+                     code += `        "x1": ${el.x1}, "y1": ${el.y1}, "x2": ${el.x2}, "y2": ${el.y2},\n`;
+                 } else if (el.type === 'circle' || el.type === 'filled-circle') {
+                     code += `        "cx": ${el.cx}, "cy": ${el.cy}, "radius": ${el.radius},\n`;
+                 }
+                 else {
+                    code += `        "x": ${el.x}, "y": ${el.y},\n`;
+                 }
+
+
+                // Add type-specific properties
+                if (el.type === 'text') {
+                    code += `        "text": "${el.text}",\n`;
+                } else if (el.type === 'rect' || el.type === 'filled-rect') {
+                    code += `        "width": ${el.width}, "height": ${el.height},\n`;
+                } else if (el.type === 'sprite') {
+                     const sprite = spriteLibrary[el.spriteDataRef];
+                     if (sprite) {
+                         code += `        "spriteDataRef": ${el.spriteDataRef}_data, # Reference to bytearray\n`;
+                         code += `        "width": ${sprite.width}, "height": ${sprite.height}, # Sprite dimensions\n`;
+                     } else {
+                          code += `        # Error: Sprite data "${el.spriteDataRef}" not found!\n`;
+                     }
+                }
+                 // Add common properties
+                 if (el.type !== 'sprite') { // Sprites get color handled during blitting
+                     code += `        "color": ${el.color},\n`;
+                 } else {
+                      // Add color for sprite, which will be the foreground color for blit
+                       code += `        "color": ${el.color},\n`;
+                 }
+
+                if (el.type === 'rect' || el.type === 'circle') {
+                    code += `        "fill": ${el.fill},\n`;
+                }
+
+                 // Add animation data (if any) for the user's reference
+                 if (el.animation) {
+                     code += `        # Animation Data (For User Reference) -\n`;
+                     // Store start position explicitly in animation data for the Python code
+                     let startX = el.type === 'line' ? el.x1 : (el.type === 'circle' || el.type === 'filled-circle' ? el.cx : el.x);
+                     let startY = el.type === 'line' ? el.y1 : (el.type === 'circle' || el.type === 'filled-circle' ? el.cy : el.y);
+
+                     code += `        "animation": {\n`;
+                     code += `            "type": "${el.animation.type}", # e.g., 'path'\n`;
+                     code += `            "startX": ${startX}, "startY": ${startY},\n`;
+                     code += `            "endX": ${el.animation.endX}, "endY": ${el.animation.endY},\n`;
+                     code += `            "steps": ${el.animation.steps}\n`;
+                     code += `        },\n`;
+                 }
+
+                code += `    },\n`;
             });
+            code += `]\n\n`;
 
-             // Assemble final code
-             let code = `# MicroPython Code for SSD1306 Display (Raspberry Pi Pico)
-# Generated by SSD1306 Simulator
-# Display Size: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}
-# IMPORTANT: ... (setup instructions) ...
+            // Drawing function in Python
+            code += `# --- Drawing Function ---\n`;
+            code += `def draw_elements(display, elements):\n`;
+            code += `    """Draws a list of element dictionaries onto the display buffer."""\n`;
+            code += `    for el in elements:\n`;
+            code += `        el_type = el["type"]\n`;
+             code += `        color = el.get("color", 1) # Default color 1 if not specified\n`;
+            code += `        fill = el.get("fill", False)\n\n`;
+            code += `        if el_type == "pixel":\n`;
+            code += `            display.pixel(el["x"], el["y"], color)\n`;
+            code += `        elif el_type == "line":\n`;
+            code += `            display.line(el["x1"], el["y1"], el["x2"], el["y2"], color)\n`;
+            code += `        elif el_type in ["rect", "filled-rect"]:\n`;
+            code += `            if fill:\n`;
+            code += `                display.fill_rect(el["x"], el["y"], el["width"], el["height"], color)\n`;
+            code += `            else:\n`;
+            code += `                display.rect(el["x"], el["y"], el["width"], el["height"], color)\n`;
+            code += `        elif el_type in ["circle", "filled-circle"]:\n`;
+            code += `            if fill:\n`;
+            code += `                # Note: SSD1306 library might not have fill_circle. This is a placeholder.\n`;
+                // Use ellipse function for filled circle if fill_circle is not available? Need to check library.
+                // The user-provided library HAS circle and fill. Let's use that.
+            code += `                # display.fill_circle(el["cx"], el["cy"], el["radius"], color) # Placeholder if library had it\n`;
+            code += `                # Using the circle function from the provided library for filled circles:\n`;
+            code += `                # The provided library's circle method has a 'fill' parameter.\n`;
+            code += `                display.circle(el["cx"], el["cy"], el["radius"], color, fill=True)\n`;
+            code += `            else:\n`;
+            code += `                display.circle(el["cx"], el["cy"], el["radius"], color, fill=False)\n`;
+            code += `        elif el_type == "text":\n`;
+            code += `            display.text(el["text"], el["x"], el["y"], color)\n`;
+            code += `        elif el_type == "sprite":\n`;
+             code += `            # Assumes your SSD1306 library has a blit method compatible with framebuf\n`;
+             code += `            # Or you might need a custom sprite drawing function.\n`;
+             code += `            # The provided library has blit which works with framebuf objects. Create a temporary framebuf.\n`;
+             code += `            sprite_buf = framebuf.FrameBuffer(el["spriteDataRef"], el["width"], el["height"], framebuf.MONO_VLSB)\n`;
+             code += `            display.blit(sprite_buf, el["x"], el["y"])\n`;
+             code += `            # Note: Color tinting for blit might require manual pixel manipulation or a different blit method.\n`;
+             code += `            # The simple blit copies pixels as is (1s are 'on', 0s are 'off').\n`;
+             code += `            # If color is 0, you might want to blit the inverse or skip.\n`;
+             code += `            if color == 0:\n`;
+             code += `                # If color is off (0), effectively draw with the background color.\n`;
+             code += `                # This might require blitting an inverse or using a different method.\n`;
+             code += `                # For monochrome, drawing with color 0 on a black background means turning pixels OFF.\n`;
+             code += `                # The default blit with MONO_VLSB assumes 1s turn pixels ON.\n`;
+             code += `                # If you need to draw sprites that turn pixels OFF, a custom function is needed.\n`;
+             code += `                # For simplicity, this generated code assumes color=1 means ON pixels from sprite data.\n`;
+             code += `                pass # Current blit handles 1 (on) pixels. Ignore if color is 0.\n`;
 
-import machine
-import time
-import ssd1306
-import framebuf
 
-# --- Display Setup (CHOOSE ONE: I2C or SPI) ---
-display_width = ${SCREEN_WIDTH}
-display_height = ${SCREEN_HEIGHT}
+            code += `\n`;
 
-# == I2C Setup ==
-# i2c = machine.I2C(0, sda=machine.Pin(8), scl=machine.Pin(9), freq=400000) # Example
-# display = ssd1306.SSD1306_I2C(display_width, display_height, i2c)
 
-# == SPI Setup ==
-spi = machine.SPI(0, baudrate=10000000, sck=machine.Pin(18), mosi=machine.Pin(19)) # Example
-dc_pin = machine.Pin(16); res_pin = machine.Pin(17); cs_pin = machine.Pin(20) # Example
-display = ssd1306.SSD1306_SPI(display_width, display_height, spi, dc_pin, res_pin, cs_pin)
+            // Main execution block with animation suggestion
+            code += `# --- Main Execution ---\n`;
+            code += `if __name__ == "__main__":\n`;
+            code += `    print("Drawing initial state...")\n`;
+            code += `    display.fill(0) # Clear the display buffer\n`;
+            code += `    draw_elements(display, elements_data) # Draw all elements\n`;
+            code += `    display.show() # Push the buffer to the display\n`;
+            code += `    #time.sleep(2) # Display initial state for a few seconds\n\n`;
 
-# --- Icon Definitions (if any) ---
-${iconDefs}
-# --- Drawing Commands ---
-display.fill(0) # Clear display
-${drawingCommands}
-# Update the display
-display.show()
+            code += `    # --- Animation Example (Modify as needed) ---\n`;
+            code += `    # To animate elements, you would typically update their positions\n`;
+            code += `    # in the 'elements_data' list within a loop.\n`;
+            code += `    # For elements with animation data defined:\n`;
+            code += `    # animated_element = next((el for el in elements_data if "animation" in el), None)\n`; # Find first animated element
+            code += `\n`;
+            code += `    # if animated_element:\n`;
+            code += `    #     anim = animated_element["animation"]\n`;
+            code += `    #     print(f"Starting animation for {animated_element['type']}...")\n`;
+            code += `    #     start_x = anim["startX"]\n`;
+            code += `    #     start_y = anim["startY"]\n`;
+            code += `    #     end_x = anim["endX"]\n`;
+            code += `    #     end_y = anim["endY"]\n`;
+            code += `    #     steps = anim["steps"]\n`;
+            code += `\n`;
+            code += `    #     for step in range(steps + 1):\n`;
+            code += `    #         # Calculate current position using linear interpolation\n`;
+            code += `    #         current_x = int(start_x + (end_x - start_x) * (step / steps))\n`;
+            code += `    #         current_y = int(start_y + (end_y - start_y) * (step / steps))\n`;
+            code += `\n`;
+            code += `    #         # Update the element's position in the list\n`;
+            code += `    #         # Note: If animating a line or circle, you might need to update x1/y1/x2/y2 or cx/cy\n`;
+            code += `    #         if animated_element["type"] == "line":\n`;
+            code += `    #             # Move both points relative to the start point's movement\n`;
+            code += `    #             dx = current_x - start_x\n`;
+            code += `    #             dy = current_y - start_y\n`;
+            code += `    #             animated_element["x1"] = start_x + dx # The 'start_x' in anim is the line's initial x1\n`;
+            code += `    #             animated_element["y1"] = start_y + dy # The 'start_y' in anim is the line's initial y1\n`;
+            code += `    #             # Need original x2, y2 to calculate delta movement correctly\n`;
+            code += `    #             # This gets complicated quickly with different element origins and animation types.\n`;
+            code += `    #             # Consider storing original x2, y2 in animation data or using a more robust animation system.\n`;
+            code += `    #             pass # Simplified: User implements complex element-specific updates\n`;
+            code += `    #         elif animated_element["type"] in ["circle", "filled-circle"]:\n`;
+            code += `    #              animated_element["cx"] = current_x\n`;
+            code += `    #              animated_element["cy"] = current_y\n`;
+            code += `    #              # Also update x,y for bounding box if needed\n`;
+            code += `    #              animated_element["x"] = current_x - animated_element["radius"]\n`;
+            code += `    #              animated_element["y"] = current_y - animated_element["radius"]\n`;
+            code += `    #         else:\n`;
+            code += `    #             animated_element["x"] = current_x\n`;
+            code += `    #             animated_element["y"] = current_y\n`;
+            code += `\n`;
+            code += `    #         display.fill(0) # Clear the previous frame\n`;
+            code += `    #         draw_elements(display, elements_data) # Draw elements at their new positions\n`;
+            code += `    #         display.show() # Update the display\n`;
+            code += `    #         #time.sleep(0.05) # Add a small delay (e.g., ~20 FPS)\n`;
+            code += `\n`;
+            code += `    print("Done.")\n`;
 
-print("Display updated.")
-`;
-            codeOutputArea.value = code;
-        }
+
+            generatedCodePre.textContent = code;
+         }
+
+
+         generateCodeButton.addEventListener('click', generateMicroPythonCode);
+
 
         // --- Initialization ---
-        function updateCanvasSizeAndScale() {
-             // Set logical canvas size
-             canvas.width = SCREEN_WIDTH;
-             canvas.height = SCREEN_HEIGHT;
-             // Set display size of canvas element based on base scale (zoom handled by container)
-             canvas.style.width = `${SCREEN_WIDTH * CANVAS_SCALE_X}px`;
-             canvas.style.height = `${SCREEN_HEIGHT * CANVAS_SCALE_Y}px`;
-             // Update container size (zoom applied in applyZoom)
-             canvasOuterContainer.style.width = `${SCREEN_WIDTH * CANVAS_SCALE_X * currentZoom}px`;
-             canvasOuterContainer.style.height = `${SCREEN_HEIGHT * CANVAS_SCALE_Y * currentZoom}px`;
-             // Update grid overlay CSS variable dependency
-             document.documentElement.style.setProperty('--canvas-scale-x', CANVAS_SCALE_X);
-             document.documentElement.style.setProperty('--canvas-scale-y', CANVAS_SCALE_Y);
-        }
-
         function initialize() {
-            updateCanvasSizeAndScale(); // Set initial size
-            applyZoom(); // Apply initial zoom
-            ctx.imageSmoothingEnabled = false;
+            // Scale canvas for better visibility in browser
+            canvas.style.width = `${DISPLAY_WIDTH * SCALE}px`;
+            canvas.style.height = `${DISPLAY_HEIGHT * SCALE}px`;
 
-            // Event listeners
-            canvasContainer.addEventListener('mousedown', handleMouseDown);
-            // canvasContainer.addEventListener('mousemove', handleMouseMove); // Drag handled separately
-            canvasContainer.addEventListener('mouseup', handleMouseUp);
-            // canvasContainer.addEventListener('mouseleave', handleMouseLeave); // Leave handled separately
-            canvasContainer.addEventListener('touchstart', handleMouseDown, { passive: false });
-            canvasContainer.addEventListener('touchmove', handleMouseMove, { passive: false });
-            canvasContainer.addEventListener('touchend', handleMouseUp, { passive: false });
-            canvasContainer.addEventListener('touchcancel', handleMouseUp, { passive: false });
+            // Load some predefined sprites
+            spriteLibrary = {
+                 "smiley": {
+                     name: "smiley", width: 8, height: 8,
+                     data: [
+                         [0,1,1,1,1,1,1,0],
+                         [1,0,0,0,0,0,0,1],
+                         [1,0,1,0,0,1,0,1],
+                         [1,0,0,0,0,0,0,1],
+                         [1,0,1,0,0,1,0,1],
+                         [1,0,0,1,1,0,0,1],
+                         [1,0,0,0,0,0,0,1],
+                         [0,1,1,1,1,1,1,0]
+                     ]
+                 },
+                 "heart": {
+                    name: "heart", width: 7, height: 7,
+                    data: [
+                         [0,0,1,0,1,0,0],
+                         [0,1,1,1,1,1,0],
+                         [1,1,1,1,1,1,1],
+                         [1,1,1,1,1,1,1],
+                         [0,1,1,1,1,1,0],
+                         [0,0,1,1,1,0,0],
+                         [0,0,0,1,0,0,0]
+                    ]
+                 }
+             };
+            updateSpriteLibrarySelect(); // Populate sprite library dropdown
 
-            // Property panel listeners (delegated)
-            propertiesPanel.addEventListener('change', handlePropertyChange);
-            propertiesPanel.addEventListener('input', (event) => {
-                 if (event.target.classList.contains('prop-input') && (event.target.type === 'number' || event.target.type === 'text' || event.target.type === 'textarea')) { handlePropertyChange(event); }
-            });
-            // Listener for lock/visible icons in header
-            propertiesPanel.addEventListener('click', (event) => {
-                if (event.target.id === 'prop-visible-toggle') handlePropertyChange({ target: { dataset: { prop: 'toggleVisible' } } });
-                if (event.target.id === 'prop-locked-toggle') handlePropertyChange({ target: { dataset: { prop: 'toggleLocked' } } });
-            });
-
-
-            // Initial state
-            history = [deepCopyElements(elements)]; // Start history with empty state
-            historyIndex = 0;
-            updateUndoRedoButtons();
-            pasteBtn.disabled = copiedElementData === null;
-            deselectElement(); // Ensure no initial selection and buttons are disabled
-            redrawAll();
-            generateMicroPythonCode();
-            pauseAnimationLoop();
+            // Initial draw
+            draw();
+            updatePropertiesPanel(); // Hide properties panel initially
+            updateElementList(); // Populate element list
         }
 
-        // --- Run Initialization ---
-        initialize();
+         // Run initialization when the DOM is ready
+        document.addEventListener('DOMContentLoaded', initialize);
+
 
     </script>
 
