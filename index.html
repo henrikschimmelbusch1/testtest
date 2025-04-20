@@ -315,12 +315,12 @@
     <!-- Sprite Editor Modal -->
     <div id="spriteEditorModal" class="modal">
         <div class="modal-content">
-            <span class="close">×</span>
+            <span class="close">&times;</span>
             <h3>Sprite Editor (<span id="current-sprite-name">New Sprite</span>)</h3>
             <div>
-                <label for="sprite-width">Width:</label>
+                <label for="sprite-editor-width">Width:</label>
                 <input type="number" id="sprite-editor-width" value="8" min="1" max="32">
-                <label for="sprite-height" style="margin-left: 10px;">Height:</label>
+                <label for="sprite-editor-height" style="margin-left: 10px;">Height:</label>
                 <input type="number" id="sprite-editor-height" value="8" min="1" max="32">
                 <button id="resize-sprite-grid">Resize Grid</button>
             </div>
@@ -521,8 +521,8 @@
 
             for (let j = 0; j < spriteHeight; j++) {
                 for (let i = 0; i < spriteWidth; i++) {
-                    if (spriteData[j][i] === 1) {
-                        // Draw pixel only if it's 'on' and within display bounds
+                    // Only draw if pixel is 'on' (1), within sprite bounds, and within display bounds
+                    if (spriteData[j] && spriteData[j][i] === 1) {
                          if (x + i < DISPLAY_WIDTH && y + j < DISPLAY_HEIGHT) {
                              drawPixel(x + i, y + j, color);
                          }
@@ -663,22 +663,15 @@
                          drawPixel(el._currentRenderX, el._currentRenderY, el.color);
                         break;
                     case 'line':
-                         // For line, animation moves both points
-                         const lineStartX = el.animation ? el.animation.startX : el.x1;
-                         const lineStartY = el.animation ? el.animation.startY : el.y1;
-                         const lineEndX = el.animation ? el.animation.endX : el.x2;
-                         const lineEndY = el.animation ? el.animation.endY : el.y2;
-
-                         let currentLineX1 = el._currentRenderX;
-                         let currentLineY1 = el._currentRenderY;
-                         let currentLineX2 = lineStartX + (lineEndX - lineStartX) * ((el.animation?.progress || 0) / (el.animation?.steps || 1));
-                         let currentLineY2 = lineStartY + (lineEndY - lineStartY) * ((el.animation?.progress || 0) / (el.animation?.steps || 1));
-
                          // The _currentRenderX/Y tracks the movement of the "origin" point (x,y for rect, cx,cy for circle, x for text/sprite).
                          // For a line, we need to shift both start and end points by the delta movement of the 'origin'.
-                         // Let's define the line origin as (x1, y1) for animation tracking.
-                         const deltaX = (el._currentRenderX || el.x1) - el.x1;
-                         const deltaY = (el._currentRenderY || el.y1) - el.y1;
+                         // We stored the line's original x1, y1 in el.x1, el.y1.
+                         // We stored the animation's *start* position in el.animation.startX, el.animation.startY (which should be == original el.x1, el.y1 if anim was set immediately).
+                         // The element._currentRenderX/Y are the *current* animated position.
+                         // The delta movement is (current - original_anim_start)
+                         const deltaX = el._currentRenderX - (el.animation?.startX ?? el.x1); // Use original if no anim
+                         const deltaY = el._currentRenderY - (el.animation?.startY ?? el.y1); // Use original if no anim
+
                          drawLine(el.x1 + deltaX, el.y1 + deltaY, el.x2 + deltaX, el.y2 + deltaY, el.color);
 
                         break;
@@ -688,10 +681,11 @@
                         break;
                     case 'circle':
                     case 'filled-circle':
+                         // The _currentRenderX/Y is the animated *center* (cx, cy) for circles
                          drawCircle(el._currentRenderX, el._currentRenderY, el.radius, el.color, el.fill);
                         break;
                     case 'text':
-                         drawText(el.text, el._currentRenderX, el._currentRenderY, el.color);
+                         drawText(el._currentRenderX, el._currentRenderY, el.text, el.color);
                         break;
                     case 'sprite':
                         const spriteData = spriteLibrary[el.spriteDataRef];
@@ -719,7 +713,8 @@
             let x = (event.clientX - rect.left) * scaleX;
             let y = (event.clientY - rect.top) * scaleY;
 
-             if (snapGrid && (selectedTool === 'select' || drawingShape)) { // Apply snap only when selecting/moving or drawing
+             // Apply snap only when selecting/moving or drawing start points
+             if (snapGrid && (selectedTool === 'select' || (drawingShape && !drawingShape.endX && !drawingShape.endY))) {
                  x = Math.round(x / GRID_SIZE) * GRID_SIZE;
                  y = Math.round(y / GRID_SIZE) * GRID_SIZE;
              }
@@ -754,11 +749,14 @@
                  propertiesPanel.style.display = 'block';
 
                  propTypeSpan.textContent = selectedElement.type;
-                 propXInput.value = selectedElement.x;
-                 propYInput.value = selectedElement.y;
+                 // Use original x,y from storage, not the potentially animated _currentRenderX/Y
+                 propXInput.value = selectedElement.type === 'line' ? selectedElement.x1 : (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.x : selectedElement.x);
+                 propYInput.value = selectedElement.type === 'line' ? selectedElement.y1 : (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.y : selectedElement.y);
+
 
                  // Hide/show specific properties based on element type
                  propTextDiv.style.display = (selectedElement.type === 'text') ? 'block' : 'none';
+                 // propSizeDivs applies to rect and sprite base dimensions
                  propSizeDivs.forEach(div => div.style.display = (selectedElement.type === 'rect' || selectedElement.type === 'filled-rect' || selectedElement.type === 'sprite') ? 'block' : 'none');
                  propRadiusDiv.style.display = (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') ? 'block' : 'none';
                  propColorDiv.style.display = (selectedElement.type !== 'sprite') ? 'block' : 'none'; // Sprites use the sprite element's color
@@ -766,10 +764,6 @@
 
                  // Sprite specific property
                  propSpriteDiv.style.display = (selectedElement.type === 'sprite') ? 'block' : 'none';
-                 if (selectedElement.type === 'sprite') {
-                     // currentSpriteName = selectedElement.spriteDataRef; // Load sprite name into editor state? No, just reference.
-                     // Need a way to edit the referenced sprite data... Maybe open the editor with the referenced sprite loaded.
-                 }
 
 
                  // Update input values
@@ -778,10 +772,14 @@
                       if (selectedElement.type === 'sprite') {
                           const sprite = spriteLibrary[selectedElement.spriteDataRef];
                            if(sprite) {
-                                propWidthInput.value = sprite.width; // Display sprite dimensions
+                                // Display sprite dimensions but disable editing
+                                propWidthInput.value = sprite.width;
                                 propHeightInput.value = sprite.height;
-                                propWidthInput.disabled = true; // Cannot resize sprite via this panel
+                                propWidthInput.disabled = true;
                                 propHeightInput.disabled = true;
+                           } else {
+                                propWidthInput.value = 0; propHeightInput.value = 0;
+                                propWidthInput.disabled = true; propHeightInput.disabled = true;
                            }
                       } else {
                         propWidthInput.value = selectedElement.width;
@@ -791,7 +789,8 @@
                       }
                  }
                  if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') propRadiusInput.value = selectedElement.radius;
-                 if (selectedElement.type !== 'sprite') propColorSelect.value = selectedElement.color;
+                 // Only update color picker if element has a color property (non-sprite)
+                 if (selectedElement.hasOwnProperty('color')) propColorSelect.value = selectedElement.color;
                  if (selectedElement.type === 'rect' || selectedElement.type === 'circle') propFillCheckbox.checked = selectedElement.fill;
 
                  // Update animation panel
@@ -805,9 +804,14 @@
          }
 
          function updateAnimationPanel() {
-             if (selectedElement) {
+             if (selectedElement && (selectedElement.type !== 'pixel' && selectedElement.type !== 'line')) { // Animation is only supported for elements with a clear 'origin' point (x,y, cx,cy)
                  noAnimSelectedMsg.style.display = 'none';
                  selectedAnimControls.style.display = 'block';
+
+                 // Get the appropriate start X/Y for animation based on element type
+                 const elementOriginX = selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.cx : selectedElement.x;
+                 const elementOriginY = selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.cy : selectedElement.y;
+
 
                  // Show animation data if exists, otherwise show default values
                  if (selectedElement.animation) {
@@ -818,8 +822,8 @@
                      removeAnimationButton.style.display = 'inline-block';
                  } else {
                      // Default end position to current + offset
-                     animEndXInput.value = selectedElement.x + 10;
-                     animEndYInput.value = selectedElement.y;
+                     animEndXInput.value = elementOriginX + 10;
+                     animEndYInput.value = elementOriginY;
                      animStepsInput.value = 50;
                       addAnimationButton.style.display = 'inline-block';
                      removeAnimationButton.style.display = 'none';
@@ -838,26 +842,35 @@
 
          function updateElementList() {
              elementListDiv.innerHTML = '';
-             elements.forEach((el, index) => {
+             // Iterate in reverse order to show top layer at the top of the list
+             for (let i = elements.length - 1; i >= 0; i--) {
+                 const el = elements[i];
                  const item = document.createElement('div');
                  item.classList.add('element-list-item');
                  if (el === selectedElement) {
                      item.classList.add('selected');
                  }
                  let label = `${el.type}`;
-                 if (el.type === 'text') label += ` ("${el.text.substring(0, 10)}...")`;
+                 if (el.type === 'text') label += ` ("${el.text.substring(0, 15)}...")`;
                  if (el.type === 'sprite' && spriteLibrary[el.spriteDataRef]) label += ` (${el.spriteDataRef})`;
-                 label += ` @ (${el.x},${el.y})`;
-                 item.textContent = `${index}: ${label}`;
-                 item.dataset.index = index;
+
+                 // Show original position in list label
+                 const originalX = el.type === 'line' ? el.x1 : (el.type === 'circle' || el.type === 'filled-circle' ? el.x : el.x);
+                 const originalY = el.type === 'line' ? el.y1 : (el.type === 'circle' || el.type === 'filled-circle' ? el.y : el.y);
+
+                 label += ` @ (${originalX},${originalY})`;
+                 item.textContent = `${elements.length - 1 - i}: ${label}`; // Display layer number (0 is top)
+                 item.dataset.index = i; // Store actual index for manipulation
                  item.addEventListener('click', () => {
-                     selectElement(el);
+                     selectElement(elements[parseInt(item.dataset.index)]); // Select element using its current index
                  });
                  elementListDiv.appendChild(item);
-             });
+             }
+
              // Disable move buttons if no element selected or at list boundary
-             moveUpButton.disabled = !selectedElement || elements.indexOf(selectedElement) === 0;
-             moveDownButton.disabled = !selectedElement || elements.indexOf(selectedElement) === elements.length - 1;
+             const selectedIndex = elements.indexOf(selectedElement);
+             moveUpButton.disabled = !selectedElement || selectedIndex === elements.length - 1; // "Up" in list is moving towards index 0
+             moveDownButton.disabled = !selectedElement || selectedIndex === 0; // "Down" in list is moving towards last index
          }
 
          function selectElement(element) {
@@ -898,8 +911,8 @@
                      return dx * dx + dy * dy <= element.radius * element.radius;
                  case 'text':
                      // Simple bounding box for text
-                     const textWidth = element.text.length * 8; // Estimate
-                     const textHeight = 8; // Estimate
+                     const textWidth = element.text.length * 8; // Estimate assuming 8px wide chars
+                     const textHeight = 8; // Estimate height
                      return x >= element.x && x < element.x + textWidth && y >= element.y && y < element.y + textHeight;
                  case 'sprite':
                      const sprite = spriteLibrary[element.spriteDataRef];
@@ -942,24 +955,32 @@
                       newY = snappedPos.y;
                  }
 
-                 // Update element's position. For lines, move both points.
+                 // Update element's position based on its type's origin point
                  if (dragInfo.element.type === 'line') {
-                     const dx = newX - dragInfo.element.x1;
+                     const dx = newX - dragInfo.element.x1; // Delta from the line's start point
                      const dy = newY - dragInfo.element.y1;
                      dragInfo.element.x1 = newX;
                      dragInfo.element.y1 = newY;
                      dragInfo.element.x2 += dx;
                      dragInfo.element.y2 += dy;
-                 } else {
-                     dragInfo.element.x = newX;
-                     dragInfo.element.y = newY;
-                     // For circle, cx/cy are the center, x/y are top-left for consistency in storage
-                     if (dragInfo.element.type === 'circle' || dragInfo.element.type === 'filled-circle') {
-                          dragInfo.element.cx = dragInfo.element.x + dragInfo.element.radius;
-                          dragInfo.element.cy = dragInfo.element.y + dragInfo.element.radius;
-                     }
-                 }
+                 } else if (dragInfo.element.type === 'circle' || dragInfo.element.type === 'filled-circle') {
+                     // dragInfo.offsetX/Y stored the offset from the circle's center (cx,cy)
+                     const newCx = pos.x - dragInfo.offsetX;
+                     const newCy = pos.y - dragInfo.offsetY;
+                      // Apply snap to the center point if enabled
+                      const snappedCenter = snapGrid ? snapToGrid(newCx, newCy) : {x: newCx, y: newCy};
+                      dragInfo.element.cx = snappedCenter.x;
+                      dragInfo.element.cy = snappedCenter.y;
+                      // Update stored x,y (top-left of bounding box) based on new center
+                      dragInfo.element.x = snappedCenter.x - dragInfo.element.radius;
+                      dragInfo.element.y = snappedCenter.y - dragInfo.element.radius;
 
+                 } else {
+                      // dragInfo.offsetX/Y stored the offset from the element's top-left (x,y)
+                      const snappedPos = snapGrid ? snapToGrid(pos.x - dragInfo.offsetX, pos.y - dragInfo.offsetY) : {x: pos.x - dragInfo.offsetX, y: pos.y - dragInfo.offsetY};
+                      dragInfo.element.x = snappedPos.x;
+                      dragInfo.element.y = snappedPos.y;
+                 }
 
                  // Update properties panel if the dragged element is the selected one
                  if (dragInfo.element === selectedElement) {
@@ -986,28 +1007,30 @@
                  if (clickedElement) {
                      selectElement(clickedElement);
                      // Start drag operation
+                      let dragStartX, dragStartY;
+                      if (clickedElement.type === 'line') {
+                           // Drag reference is the line's start point (x1, y1)
+                           dragStartX = clickedElement.x1;
+                           dragStartY = clickedElement.y1;
+                      } else if (clickedElement.type === 'circle' || clickedElement.type === 'filled-circle') {
+                           // Drag reference is the circle's center (cx, cy)
+                           dragStartX = clickedElement.cx;
+                           dragStartY = clickedElement.cy;
+                      } else {
+                           // Drag reference is the element's top-left (x, y)
+                           dragStartX = clickedElement.x;
+                           dragStartY = clickedElement.y;
+                      }
+
                      dragInfo = {
                          element: clickedElement,
-                         // Store offset from top-left for simple drag
-                         offsetX: pos.x - clickedElement.x,
-                         offsetY: pos.y - clickedElement.y,
-                         startX: clickedElement.x, // Store initial position
-                         startY: clickedElement.y,
+                         offsetX: pos.x - dragStartX,
+                         offsetY: pos.y - dragStartY,
+                         startX: dragStartX, // Store initial position of the drag reference point
+                         startY: dragStartY,
                          type: 'move' // Could add 'resize' later
                      };
-                      // For line, use x1, y1 as the origin for drag calculation
-                      if (clickedElement.type === 'line') {
-                           dragInfo.offsetX = pos.x - clickedElement.x1;
-                           dragInfo.offsetY = pos.y - clickedElement.y1;
-                           dragInfo.startX = clickedElement.x1;
-                           dragInfo.startY = clickedElement.y1;
-                      } else if (clickedElement.type === 'circle' || clickedElement.type === 'filled-circle') {
-                           // Use the stored x,y (top-left of bounding box) for drag
-                           dragInfo.offsetX = pos.x - clickedElement.x;
-                           dragInfo.offsetY = pos.y - clickedElement.y;
-                           dragInfo.startX = clickedElement.x;
-                           dragInfo.startY = clickedElement.y;
-                      }
+
 
                  } else {
                      // Clicked outside elements, deselect
@@ -1015,27 +1038,33 @@
                      dragInfo = null; // No drag started
                  }
              } else if (selectedTool === 'pixel') {
-                 elements.push({ type: 'pixel', x: pos.x, y: pos.y, color: 1 });
+                 elements.push({ type: 'pixel', x: pos.x, y: pos.y, color: parseInt(propColorSelect.value) }); // Use selected color
                  draw();
                  updateElementList();
              } else if (selectedTool === 'eraser') {
                  // Remove pixel if one exists at this location
                  const initialLength = elements.length;
-                 elements = elements.filter(el =>
-                     !(el.type === 'pixel' && el.x === pos.x && el.y === pos.y)
-                 );
-                  if (elements.length < initialLength) {
+                  // Iterate in reverse to safely remove and hit top layer first
+                 for (let i = elements.length - 1; i >= 0; i--) {
+                      const el = elements[i];
+                      if (el.type === 'pixel' && el.x === pos.x && el.y === pos.y) {
+                         elements.splice(i, 1);
+                         // If the deleted element was selected, deselect it
+                         if (el === selectedElement) {
+                             selectElement(null);
+                         }
+                         break; // Assume only one pixel element per coordinate for simplicity
+                      }
+                 }
+
+                 if (elements.length < initialLength) {
                      draw();
                      updateElementList();
-                     // If the deleted element was selected, deselect it
-                     if (selectedElement && selectedElement.type === 'pixel' && selectedElement.x === pos.x && selectedElement.y === pos.y) {
-                         selectElement(null);
-                     }
                  }
              } else if (selectedTool === 'sprite' && currentSpriteData && currentSpriteName && spriteLibrary[currentSpriteName]) {
                   // Place the currently saved sprite
                   const sprite = spriteLibrary[currentSpriteName];
-                  elements.push({ type: 'sprite', x: pos.x, y: pos.y, spriteDataRef: currentSpriteName, color: 1 }); // Sprites use a reference and a color tint
+                  elements.push({ type: 'sprite', x: pos.x, y: pos.y, spriteDataRef: currentSpriteName, color: parseInt(propColorSelect.value) }); // Sprites use a reference and a color tint
                   draw();
                   updateElementList();
              }
@@ -1094,27 +1123,33 @@
                          const y = Math.min(startY, endY);
                          const width = Math.abs(startX - endX) + 1; // +1 to include the end pixel
                          const height = Math.abs(startY - endY) + 1; // +1 to include the end pixel
-                         newElement = { type: 'rect', x: x, y: y, width: width, height: height, color: color, fill: fill };
+                         // Don't add zero-width/height rectangles
+                         if (width > 0 && height > 0) {
+                            newElement = { type: drawingShape.type, x: x, y: y, width: width, height: height, color: color, fill: fill };
+                         }
                          break;
                       case 'circle':
                       case 'filled-circle':
                           // Define circle by center and radius. Let's treat start as center and end as a point on circumference.
-                          // Or, treat start as one corner of bounding box, end as opposite?
-                          // Let's simplify: Start = Center, End determines Radius.
-                          const dx = endX - startX;
-                          const dy = endY - startY;
+                          const cx = drawingShape.startX;
+                          const cy = drawingShape.startY;
+                          const dx = endX - cx;
+                          const dy = endY - cy;
                           const radius = Math.round(Math.sqrt(dx * dx + dy * dy));
-                           // Store center (cx, cy) and radius (r). Also store top-left (x,y) for consistent property panel/drag
-                           newElement = {
-                                type: 'circle',
-                                cx: startX,
-                                cy: startY,
-                                radius: radius,
-                                x: startX - radius, // Top-left of bounding box
-                                y: startY - radius, // Top-left of bounding box
-                                color: color,
-                                fill: fill
-                           };
+                           // Don't add zero-radius circles
+                           if (radius > 0) {
+                               // Store center (cx, cy) and radius (r). Also store top-left (x,y) for consistent property panel/drag
+                               newElement = {
+                                    type: drawingShape.type,
+                                    cx: cx,
+                                    cy: cy,
+                                    radius: radius,
+                                    x: cx - radius, // Top-left of bounding box (for property panel consistency)
+                                    y: cy - radius, // Top-left of bounding box (for property panel consistency)
+                                    color: color,
+                                    fill: fill
+                               };
+                           }
                           break;
                  }
 
@@ -1137,16 +1172,17 @@
          propXInput.addEventListener('change', (event) => {
              if (selectedElement) {
                  const newX = parseInt(event.target.value);
-                  // For circles, changing X needs to update cx and the stored x
-                  if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') {
-                      const dx = newX - selectedElement.x; // Change in x
-                      selectedElement.x = newX;
-                      selectedElement.cx += dx;
-                  } else if (selectedElement.type === 'line') {
-                      // For lines, changing X needs to move both points
+                 if (isNaN(newX)) return;
+                 // Update position based on element type's origin point
+                  if (selectedElement.type === 'line') {
                        const dx = newX - selectedElement.x1;
                        selectedElement.x1 = newX;
                        selectedElement.x2 += dx;
+                  } else if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') {
+                       // Change x (top-left) updates cx, maintaining radius
+                       const newCx = newX + selectedElement.radius;
+                       selectedElement.x = newX; // Update stored top-left x
+                       selectedElement.cx = newCx; // Update center x
                   }
                  else {
                     selectedElement.x = newX;
@@ -1159,16 +1195,17 @@
          propYInput.addEventListener('change', (event) => {
             if (selectedElement) {
                  const newY = parseInt(event.target.value);
-                 // For circles, changing Y needs to update cy and the stored y
-                 if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') {
-                     const dy = newY - selectedElement.y; // Change in y
-                     selectedElement.y = newY;
-                     selectedElement.cy += dy;
-                 } else if (selectedElement.type === 'line') {
-                       // For lines, changing Y needs to move both points
+                  if (isNaN(newY)) return;
+                 // Update position based on element type's origin point
+                 if (selectedElement.type === 'line') {
                        const dy = newY - selectedElement.y1;
                        selectedElement.y1 = newY;
                        selectedElement.y2 += dy;
+                 } else if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') {
+                      // Change y (top-left) updates cy, maintaining radius
+                      const newCy = newY + selectedElement.radius;
+                      selectedElement.y = newY; // Update stored top-left y
+                      selectedElement.cy = newCy; // Update center y
                  }
                  else {
                     selectedElement.y = newY;
@@ -1183,19 +1220,24 @@
              if (selectedElement && selectedElement.type === 'text') {
                  selectedElement.text = event.target.value;
                  draw();
+                 updateElementList(); // Text content might affect list label
              }
          });
 
          propWidthInput.addEventListener('change', (event) => {
              if (selectedElement && (selectedElement.type === 'rect' || selectedElement.type === 'filled-rect')) {
-                 selectedElement.width = parseInt(event.target.value);
+                 const newWidth = parseInt(event.target.value);
+                  if (isNaN(newWidth) || newWidth < 0) return; // Prevent negative width
+                 selectedElement.width = newWidth;
                  draw();
              }
          });
 
          propHeightInput.addEventListener('change', (event) => {
              if (selectedElement && (selectedElement.type === 'rect' || selectedElement.type === 'filled-rect')) {
-                 selectedElement.height = parseInt(event.target.value);
+                  const newHeight = parseInt(event.target.value);
+                  if (isNaN(newHeight) || newHeight < 0) return; // Prevent negative height
+                 selectedElement.height = newHeight;
                  draw();
              }
          });
@@ -1203,8 +1245,9 @@
          propRadiusInput.addEventListener('change', (event) => {
              if (selectedElement && (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle')) {
                  const newRadius = parseInt(event.target.value);
+                  if (isNaN(newRadius) || newRadius < 0) return; // Prevent negative radius
                  selectedElement.radius = newRadius;
-                 // Update stored x,y (top-left) based on new radius
+                 // Update stored x,y (top-left) based on new radius, keeping cx/cy
                  selectedElement.x = selectedElement.cx - newRadius;
                  selectedElement.y = selectedElement.cy - newRadius;
                  draw();
@@ -1212,16 +1255,16 @@
          });
 
          propColorSelect.addEventListener('change', (event) => {
-             if (selectedElement) {
+             if (selectedElement && selectedElement.hasOwnProperty('color')) { // Check if element type has a color property
                  selectedElement.color = parseInt(event.target.value);
                  draw();
              }
          });
 
          propFillCheckbox.addEventListener('change', (event) => {
-             if (selectedElement && (selectedElement.type === 'rect' || selectedElement.type === 'circle')) {
+             if (selectedElement && (selectedElement.type.startsWith('rect') || selectedElement.type.startsWith('circle'))) {
                  selectedElement.fill = event.target.checked;
-                 // Change type name in UI if needed (e.g., rect -> filled-rect)
+                 // Update type name based on fill state
                  if (selectedElement.type === 'rect' && selectedElement.fill) selectedElement.type = 'filled-rect';
                  if (selectedElement.type === 'filled-rect' && !selectedElement.fill) selectedElement.type = 'rect';
                  if (selectedElement.type === 'circle' && selectedElement.fill) selectedElement.type = 'filled-circle';
@@ -1267,11 +1310,14 @@
          moveUpButton.addEventListener('click', () => {
              if (selectedElement) {
                  const index = elements.indexOf(selectedElement);
-                 if (index > 0) {
+                 // "Move Up" in the UI list means decreasing the index in the array (moving to an earlier position, drawn later)
+                 if (index < elements.length - 1) {
                      // Swap elements
-                     [elements[index], elements[index - 1]] = [elements[index - 1], elements[index]];
+                     [elements[index], elements[index + 1]] = [elements[index + 1], elements[index]];
                      updateElementList();
                      draw(); // Redraw with new layer order
+                     // Reselect the element to update button states and list highlighting
+                     selectElement(selectedElement);
                  }
              }
          });
@@ -1279,11 +1325,14 @@
          moveDownButton.addEventListener('click', () => {
              if (selectedElement) {
                  const index = elements.indexOf(selectedElement);
-                 if (index < elements.length - 1) {
+                 // "Move Down" in the UI list means increasing the index in the array (moving to a later position, drawn earlier)
+                 if (index > 0) {
                      // Swap elements
-                     [elements[index], elements[index + 1]] = [elements[index + 1], elements[index]];
+                     [elements[index], elements[index - 1]] = [elements[index - 1], elements[index]];
                      updateElementList();
                      draw(); // Redraw with new layer order
+                      // Reselect the element to update button states and list highlighting
+                     selectElement(selectedElement);
                  }
              }
          });
@@ -1293,61 +1342,121 @@
          function playAnimationPreview() {
             if (!selectedElement || !selectedElement.animation) return;
 
+            // Stop any existing animation preview first
+            stopAnimationPreview();
+
             const anim = selectedElement.animation;
             anim.progress = 0; // Start at step 0
-            anim.startTime = performance.now(); // Record start time
-            anim.startX = selectedElement.x; // Store current pos as start for animation
-            anim.startY = selectedElement.y;
+            // Store the element's current position as the animation start position
+             anim.startX = selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.cx : selectedElement.x;
+             anim.startY = selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.cy : selectedElement.y;
 
-            // Make a deep copy of the initial state of all elements for consistent preview
+
+            // Make a deep copy of the initial state of *all* elements for consistent preview rendering frame by frame
+             // Add temporary IDs if they don't exist, to find the element in the copied array
+             elements.forEach(el => {
+                  if (!el.id) el.id = Date.now() + Math.random();
+             });
              const initialElementsState = JSON.parse(JSON.stringify(elements));
 
             function animate(currentTime) {
-                if (!anim.startTime) anim.startTime = currentTime;
+                // Find the animating element in the initial state copy
+                const elementToAnimateInitial = initialElementsState.find(el => el.id === selectedElement.id);
 
-                const elapsedTime = currentTime - anim.startTime;
-                 // Calculate which step we are at based on elapsed time and total steps (assume ~30-60fps)
-                 // A simpler approach is to just increment step per frame
-                 anim.progress++;
+                if (!elementToAnimateInitial) {
+                     console.error("Animating element not found in initial state copy!");
+                     stopAnimationPreview();
+                     return;
+                }
 
+                 anim.progress++; // Increment step
 
                 if (anim.progress <= anim.steps) {
-                    // Restore initial state, then update the selected element's position for this frame
-                     elements = JSON.parse(JSON.stringify(initialElementsState)); // Start from the beginning state
-                     const elementToAnimate = elements.find(el => el.id === selectedElement.id); // Find the animating element in the current frame's state copy
+                    // Create a fresh copy of the initial state for each frame
+                     const currentFrameElements = JSON.parse(JSON.stringify(initialElementsState));
+                    // Find the animating element in the current frame's state copy using its ID
+                    const elementToAnimateThisFrame = currentFrameElements.find(el => el.id === selectedElement.id);
 
-                     if (elementToAnimate) {
+                    if (elementToAnimateThisFrame) {
                          const currentStep = anim.progress;
                          const totalSteps = anim.steps;
 
-                          // Update position based on progress
-                         elementToAnimate.x = anim.startX + (anim.endX - anim.startX) * (currentStep / totalSteps);
-                         elementToAnimate.y = anim.startY + (anim.endY - anim.startY) * (currentStep / totalSteps);
+                          // Calculate new position using linear interpolation based on animation's start/end points
+                         const currentX = anim.startX + (anim.endX - anim.startX) * (currentStep / totalSteps);
+                         const currentY = anim.startY + (anim.endY - anim.startY) * (currentStep / totalSteps);
 
-                          // Update element._currentRenderX/Y to the new position
-                          elementToAnimate._currentRenderX = elementToAnimate.x;
-                          elementToAnimate._currentRenderY = elementToAnimate.y;
+                          // Update the element's position properties *in the frame's copy*
+                         if (elementToAnimateThisFrame.type === 'line') {
+                             // Move both points relative to the start point's movement
+                             const originalX1 = elementToAnimateInitial.x1; // Use x1 from initial state
+                             const originalY1 = elementToAnimateInitial.y1;
+                             const originalX2 = elementToAnimateInitial.x2; // Use x2 from initial state
+                             const originalY2 = elementToAnimateInitial.y2;
 
-                         // Update properties panel during animation? Probably too distracting.
-                     } else {
-                          console.error("Animating element not found in frame state copy!");
-                          stopAnimationPreview();
-                          return;
-                     }
+                             const deltaX = currentX - originalX1;
+                             const deltaY = currentY - originalY1;
+
+                             elementToAnimateThisFrame.x1 = originalX1 + deltaX;
+                             elementToAnimateThisFrame.y1 = originalY1 + deltaY;
+                             elementToAnimateThisFrame.x2 = originalX2 + deltaX;
+                             elementToAnimateThisFrame.y2 = originalY2 + deltaY;
+
+                             // For drawing preview, use the updated x1/y1 for _currentRenderX/Y
+                             elementToAnimateThisFrame._currentRenderX = elementToAnimateThisFrame.x1;
+                             elementToAnimateThisFrame._currentRenderY = elementToAnimateThisFrame.y1;
+
+                         } else if (elementToAnimateThisFrame.type === 'circle' || elementToAnimateThisFrame.type === 'filled-circle') {
+                              // Update center (cx, cy) in the frame's copy
+                              elementToAnimateThisFrame.cx = currentX;
+                              elementToAnimateThisFrame.cy = currentY;
+                              // Update stored x,y (top-left) based on new center for drawing/hit-testing in preview
+                              elementToAnimateThisFrame.x = currentX - elementToAnimateThisFrame.radius;
+                              elementToAnimateThisFrame.y = currentY - elementToAnimateThisFrame.radius;
+
+                              // For drawing preview, use the updated cx/cy for _currentRenderX/Y
+                              elementToAnimateThisFrame._currentRenderX = elementToAnimateThisFrame.cx;
+                              elementToAnimateThisFrame._currentRenderY = elementToAnimateThisFrame.cy;
+                         } else {
+                              // Update x, y in the frame's copy (for pixel, rect, text, sprite)
+                              elementToAnimateThisFrame.x = currentX;
+                              elementToAnimateThisFrame.y = currentY;
+
+                              // For drawing preview, use the updated x/y for _currentRenderX/Y
+                              elementToAnimateThisFrame._currentRenderX = elementToAnimateThisFrame.x;
+                              elementToAnimateThisFrame._currentRenderY = elementToAnimateThisFrame.y;
+                         }
 
 
-                    draw(); // Redraw the canvas for this frame
+                         // Temporarily swap out the main elements array with the frame's state for drawing
+                         const originalElementsRef = elements;
+                         elements = currentFrameElements;
+                         draw(); // Redraw the canvas for this frame
+                         elements = originalElementsRef; // Swap back
 
-                    animationFrameId = requestAnimationFrame(animate);
+
+                         animationFrameId = requestAnimationFrame(animate);
+                    } else {
+                         console.error("Animating element disappeared during animation?");
+                         stopAnimationPreview();
+                    }
+
                 } else {
                     // Animation finished
                     stopAnimationPreview();
-                    // Optionally reset element position to end state or original start state
-                     // Let's reset to the state *before* animation started for clarity in the editor
-                    elements = JSON.parse(JSON.stringify(initialElementsState));
-                     draw();
+                    // The stopAnimationPreview function resets positions and redraws the static state.
                 }
             }
+
+             // Add temporary IDs if they don't exist, to find the element in the copied array
+             elements.forEach(el => {
+                  if (!el.id) el.id = Date.now() + Math.random();
+             });
+             // Store the initial positions in the animation object itself *before* starting
+             const elementOriginX = selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.cx : selectedElement.x;
+             const elementOriginY = selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.cy : selectedElement.y;
+             selectedElement.animation.startX = elementOriginX;
+             selectedElement.animation.startY = elementOriginY;
+
 
              playAnimationButton.disabled = true;
              stopAnimationButton.disabled = false;
@@ -1360,15 +1469,37 @@
                 animationFrameId = null;
                 // Reset the animated element's position in the main elements array
                 if (selectedElement && selectedElement.animation) {
-                     // Restore the original position before animation started
-                     selectedElement.x = selectedElement.animation.startX;
-                     selectedElement.y = selectedElement.animation.startY;
+                     // Restore the original position that was stored in the animation object
+                     const originalX = selectedElement.animation.startX;
+                     const originalY = selectedElement.animation.startY;
+
+                      if (selectedElement.type === 'line') {
+                          // Calculate delta from the line's *original* start point stored in the element
+                          const deltaX = originalX - selectedElement.x1;
+                          const deltaY = originalY - selectedElement.y1;
+                          selectedElement.x1 = originalX;
+                          selectedElement.y1 = originalY;
+                          selectedElement.x2 += deltaX; // Move x2 by the same delta
+                          selectedElement.y2 += deltaY; // Move y2 by the same delta
+                      } else if (selectedElement.type === 'circle' || selectedElement.type === 'filled-circle') {
+                          // Restore the center point (cx, cy)
+                          selectedElement.cx = originalX;
+                          selectedElement.cy = originalY;
+                          // Update stored x,y (top-left) based on restored center
+                          selectedElement.x = originalX - selectedElement.radius;
+                          selectedElement.y = originalY - selectedElement.radius;
+                      } else {
+                          // Restore x, y (for pixel, rect, text, sprite)
+                          selectedElement.x = originalX;
+                          selectedElement.y = originalY;
+                      }
+
                      delete selectedElement.animation.progress; // Remove progress state
-                     delete selectedElement.animation.startTime;
+                     delete selectedElement.animation.startTime; // Not used in preview, but good cleanup
+                     // delete selectedElement.animation.startX; // Keep startX/startY in anim data for code generation
+                     // delete selectedElement.animation.startY;
                      delete selectedElement._currentRenderX; // Clear rendering position override
                      delete selectedElement._currentRenderY;
-                     delete selectedElement.animation.startX; // Remove start pos stored for anim
-                     delete selectedElement.animation.startY;
                 }
                  draw(); // Redraw to show static state
                  playAnimationButton.disabled = !selectedElement || !selectedElement.animation;
@@ -1379,20 +1510,25 @@
 
          addAnimationButton.addEventListener('click', () => {
              if (selectedElement) {
+                 // Get the element's current position to store as the animation start
+                 const elementOriginX = selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.cx : selectedElement.x;
+                 const elementOriginY = selectedElement.type === 'circle' || selectedElement.type === 'filled-circle' ? selectedElement.cy : selectedElement.y;
+
                  selectedElement.animation = {
                      type: 'path', // Only supporting path for now
-                     startX: selectedElement.x,
-                     startY: selectedElement.y,
-                     endX: parseInt(animEndXInput.value),
-                     endY: parseInt(animEndYInput.value),
-                     steps: parseInt(animStepsInput.value)
+                     // Store the position *at the moment animation is added* as the animation start
+                     startX: elementOriginX,
+                     startY: elementOriginY,
+                     endX: parseInt(animEndXInput.value) || 0, // Ensure number, default 0
+                     endY: parseInt(animEndYInput.value) || 0, // Ensure number, default 0
+                     steps: parseInt(animStepsInput.value) || 50 // Ensure number, default 50
                  };
-                 // Assign a unique ID to the element so we can find it in the copied state during animation
+                 // Assign a unique ID to the element so we can find it in copies during animation
                  if (!selectedElement.id) {
                       selectedElement.id = Date.now() + Math.random();
                  }
                  updateAnimationPanel();
-                 console.log(`Animation added to element ${selectedElement.type} at (${selectedElement.x},${selectedElement.y})`);
+                 console.log(`Animation added to element ${selectedElement.type} starting at (${selectedElement.animation.startX},${selectedElement.animation.startY})`);
              }
          });
 
@@ -1445,16 +1581,17 @@
          function loadSpriteIntoEditor(spriteData, width, height) {
              spriteEditorWidthInput.value = width;
              spriteEditorHeightInput.value = height;
-             generateSpriteGrid(width, height); // Re-generate grid
+             generateSpriteGrid(width, height); // Re-generate grid and currentSpriteData array
 
-             // Load pixel data
+             // Load pixel data into the grid divs and the currentSpriteData array
              for (let y = 0; y < height; y++) {
                  for (let x = 0; x < width; x++) {
+                     // Ensure the data exists before accessing it
                      if (spriteData[y] && spriteData[y][x] === 1) {
                          const pixelDiv = spriteEditorGridDiv.querySelector(`.pixel[data-x="${x}"][data-y="${y}"]`);
                          if (pixelDiv) {
                              pixelDiv.classList.add('on');
-                             currentSpriteData[y][x] = 1; // Update state data
+                             currentSpriteData[y][x] = 1; // Ensure state data is also updated
                          }
                      }
                  }
@@ -1505,7 +1642,7 @@
              if (width >= 1 && width <= 32 && height >= 1 && height <= 32) {
                   // Preserve existing pixels if grid shrinks/grows
                  const oldData = currentSpriteData;
-                 const oldWidth = oldData ? oldData[0].length : 0;
+                 const oldWidth = oldData && oldData.length > 0 ? oldData[0].length : 0;
                  const oldHeight = oldData ? oldData.length : 0;
 
                  generateSpriteGrid(width, height); // Creates new empty grid and updates currentSpriteData
@@ -1516,6 +1653,7 @@
                       const copyHeight = Math.min(height, oldHeight);
                       for(let y = 0; y < copyHeight; y++) {
                            for(let x = 0; x < copyWidth; x++) {
+                                // Check bounds for oldData
                                 if (oldData[y] && oldData[y][x] === 1) {
                                     currentSpriteData[y][x] = 1;
                                      const pixelDiv = spriteEditorGridDiv.querySelector(`.pixel[data-x="${x}"][data-y="${y}"]`);
@@ -1538,16 +1676,23 @@
          });
 
          saveSpriteButton.addEventListener('click', () => {
-             const name = spriteNameInput.value.trim();
+             let name = spriteNameInput.value.trim();
+             // Sanitize name for Python variable (start with letter/underscore, followed by letter/underscore/number)
+             name = name.replace(/[^a-zA-Z0-9_]/g, ''); // Remove invalid chars
+             if (name.length > 0 && name.match(/^[^a-zA-Z_]/)) { // Ensure starts with letter or underscore
+                 name = '_' + name;
+             }
+             if (!name) {
+                 alert('Invalid sprite name. Please use letters, numbers, and underscores, starting with a letter or underscore.');
+                 return;
+             }
+
+
              const width = parseInt(spriteEditorWidthInput.value);
              const height = parseInt(spriteEditorHeightInput.value);
 
-             if (!name) {
-                 alert('Sprite name cannot be empty.');
-                 return;
-             }
              if (!currentSpriteData || width <= 0 || height <= 0) {
-                 alert('Sprite data is empty.');
+                 alert('Sprite data is empty or dimensions are invalid.');
                  return;
              }
 
@@ -1556,7 +1701,7 @@
                  name: name,
                  width: width,
                  height: height,
-                 data: JSON.parse(JSON.stringify(currentSpriteData)) // Store a copy
+                 data: JSON.parse(JSON.stringify(currentSpriteData)) // Store a deep copy
              };
              currentSpriteName = name; // Set current name to saved name
              currentSpriteNameSpan.textContent = name;
@@ -1564,10 +1709,18 @@
              alert(`Sprite "${name}" saved!`);
 
              // If the currently selected element is a sprite, update its reference if the name changed
-             if (selectedElement && selectedElement.type === 'sprite' && selectedElement.spriteDataRef !== name) {
-                  selectedElement.spriteDataRef = name;
-                  updatePropertiesPanel(); // Update sprite name shown in properties
-                  draw(); // Redraw to reflect potential size change if loaded sprite was different size
+             // Also update its dimensions displayed in the properties panel
+             if (selectedElement && selectedElement.type === 'sprite') {
+                 if (selectedElement.spriteDataRef !== name) {
+                      selectedElement.spriteDataRef = name;
+                      updatePropertiesPanel(); // Update sprite name shown in properties
+                      draw(); // Redraw to reflect potential size change if loaded sprite was different size
+                 } else {
+                      // If saving the same sprite name that's already selected, just update the properties panel
+                      // in case the sprite dimensions changed during editing.
+                      updatePropertiesPanel();
+                      draw(); // Redraw the canvas as the sprite's appearance might have changed
+                 }
              }
          });
 
@@ -1579,6 +1732,9 @@
                 spriteNameInput.value = currentSpriteName;
                 currentSpriteNameSpan.textContent = currentSpriteName;
                 loadSpriteIntoEditor(sprite.data, sprite.width, sprite.height);
+            } else if (name) {
+                // Should not happen if updateSpriteLibrarySelect is called correctly, but handle it.
+                 alert(`Sprite "${name}" not found in library.`);
             } else {
                 alert('Please select a sprite to load.');
             }
@@ -1597,45 +1753,64 @@
             code += `# Example for I2C:\n`;
             code += `import machine\n`;
             code += `import ssd1306\n`;
-            code += `import time\n\n`;
+            code += `import time\n`;
+            code += `import framebuf # Needed for sprites\n\n`; // Added framebuf import
+
+
             code += `# Example I2C setup (adjust pins and address as needed):\n`;
-            code += `i2c = machine.I2C(0, scl=machine.Pin(1), sda=machine.Pin(0))\n`;
-            code += `display = ssd1306.SSD1306_I2C(${DISPLAY_WIDTH}, ${DISPLAY_HEIGHT}, i2c)\n\n`;
+            code += `# i2c = machine.I2C(0, scl=machine.Pin(1), sda=machine.Pin(0))\n`;
+            code += `# display = ssd1306.SSD1306_I2C(${DISPLAY_WIDTH}, ${DISPLAY_HEIGHT}, i2c)\n\n`;
             code += `# Example for SPI (adjust pins and baudrate as needed):\n`;
             code += `# import machine\n`;
             code += `# import ssd1306\n`;
-            code += `# import time\n\n`;
+            code += `# import time\n`;
+            code += `# import framebuf # Needed for sprites\n\n`; // Added framebuf import
             code += `# spi = machine.SPI(0, baudrate=10000000, polarity=0, phase=0, sck=machine.Pin(2), mosi=machine.Pin(3))\n`;
             code += `# dc = machine.Pin(4, machine.Pin.OUT)\n`;
             code += `# res = machine.Pin(5, machine.Pin.OUT)\n`;
             code += `# cs = machine.Pin(6, machine.Pin.OUT)\n`;
             code += `# display = ssd1306.SSD1306_SPI(${DISPLAY_WIDTH}, ${DISPLAY_HEIGHT}, spi, dc, res, cs)\n\n`;
+            code += `# --- Choose one setup above and uncomment it ---\n\n`;
 
 
             // Generate Sprite Data
              code += `# --- Sprite Data ---\n`;
-             for (const name in spriteLibrary) {
-                 const sprite = spriteLibrary[name];
-                 const flatData = [];
-                 // Convert 2D array to byte array (assuming vertical bit packing as per framebuf)
-                 // Each byte represents 8 vertical pixels in a column
-                 for (let i = 0; i < sprite.width; i++) { // Iterate columns
-                     for (let j = 0; j < sprite.height; j += 8) { // Iterate down in 8-pixel chunks
-                         let byte = 0;
-                         for (let k = 0; k < 8; k++) {
-                             const pixelY = j + k;
-                              if (pixelY < sprite.height) {
-                                 if (sprite.data[pixelY] && sprite.data[pixelY][i] === 1) {
+             if (Object.keys(spriteLibrary).length > 0) {
+                 for (const name in spriteLibrary) {
+                     const sprite = spriteLibrary[name];
+                     // Ensure name is safe for Python
+                     let pythonName = name.replace(/[^a-zA-Z0-9_]/g, '');
+                      if (pythonName.length > 0 && pythonName.match(/^[^a-zA-Z_]/)) {
+                         pythonName = '_' + pythonName;
+                      }
+                      if (!pythonName) {
+                          code += `# WARNING: Could not generate valid Python name for sprite "${name}"\n`;
+                          continue;
+                      }
+
+
+                     const flatData = [];
+                     // Convert 2D array to byte array (assuming vertical bit packing as per framebuf.MONO_VLSB)
+                     // Each byte represents 8 vertical pixels in a column
+                     for (let i = 0; i < sprite.width; i++) { // Iterate columns
+                         for (let j = 0; j < sprite.height; j += 8) { // Iterate down in 8-pixel chunks
+                             let byte = 0;
+                             for (let k = 0; k < 8; k++) {
+                                 const pixelY = j + k;
+                                  if (pixelY < sprite.height && sprite.data[pixelY] && sprite.data[pixelY][i] === 1) {
                                      byte |= (1 << k); // Set bit k if pixel is on
-                                 }
-                              }
+                                  }
+                             }
+                             flatData.push(byte);
                          }
-                         flatData.push(byte);
                      }
+                     code += `${pythonName}_data = bytearray([${flatData.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]) # ${sprite.width}x${sprite.height}\n`;
                  }
-                 code += `${name}_data = bytearray([${flatData.map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]) # ${sprite.width}x${sprite.height}\n`;
+                 code += `\n`;
+             } else {
+                  code += `# No sprites defined.\n\n`;
              }
-             code += `\n`;
+
 
             // Generate initial elements data structure
             code += `# --- Element Definitions (Initial State) ---\n`;
@@ -1647,49 +1822,64 @@
                  if (el.type === 'line') {
                      code += `        "x1": ${el.x1}, "y1": ${el.y1}, "x2": ${el.x2}, "y2": ${el.y2},\n`;
                  } else if (el.type === 'circle' || el.type === 'filled-circle') {
+                     // Store center coordinates for circles
                      code += `        "cx": ${el.cx}, "cy": ${el.cy}, "radius": ${el.radius},\n`;
+                     // Also store the top-left x,y for consistent property panel handling in the editor
+                     // code += `        # editor_x: ${el.x}, editor_y: ${el.y},\n`; // Add as comment if needed for debugging
                  }
                  else {
+                     // Store top-left coordinates for others
                     code += `        "x": ${el.x}, "y": ${el.y},\n`;
                  }
 
 
                 // Add type-specific properties
                 if (el.type === 'text') {
-                    code += `        "text": "${el.text}",\n`;
+                    // Escape backslashes and double quotes in text
+                    const escapedText = el.text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                    code += `        "text": "${escapedText}",\n`;
                 } else if (el.type === 'rect' || el.type === 'filled-rect') {
                     code += `        "width": ${el.width}, "height": ${el.height},\n`;
                 } else if (el.type === 'sprite') {
                      const sprite = spriteLibrary[el.spriteDataRef];
-                     if (sprite) {
-                         code += `        "spriteDataRef": ${el.spriteDataRef}_data, # Reference to bytearray\n`;
+                     // Sanitize name for Python variable
+                     let pythonName = el.spriteDataRef.replace(/[^a-zA-Z0-9_]/g, '');
+                      if (pythonName.length > 0 && pythonName.match(/^[^a-zA-Z_]/)) {
+                         pythonName = '_' + pythonName;
+                      }
+
+                     if (sprite && pythonName) {
+                         code += `        "spriteDataRef": ${pythonName}_data, # Reference to bytearray\n`;
                          code += `        "width": ${sprite.width}, "height": ${sprite.height}, # Sprite dimensions\n`;
                      } else {
-                          code += `        # Error: Sprite data "${el.spriteDataRef}" not found!\n`;
+                          code += `        # Error: Sprite data or name "${el.spriteDataRef}" not found or invalid!\n`;
                      }
                 }
                  // Add common properties
-                 if (el.type !== 'sprite') { // Sprites get color handled during blitting
+                 if (el.type !== 'sprite') { // Sprites get color handled during blitting as foreground color
                      code += `        "color": ${el.color},\n`;
                  } else {
-                      // Add color for sprite, which will be the foreground color for blit
-                       code += `        "color": ${el.color},\n`;
+                      // Add color for sprite, which will be the foreground color for blit.
+                      // The framebuf blit method uses the color parameter to specify which pixels in the source
+                      // buffer (1s or 0s) are drawn using the foreground color, and which using the background.
+                      // We generate MONO_VLSB data where 1s are the pixels we want to draw.
+                      // The default behavior of blit(src_fb, x, y, key=-1) copies 1s from src_fb as foreground, 0s as background.
+                      // If color is 0, we want the sprite's ON pixels to turn display pixels OFF (draw with background color).
+                      // This requires setting a 'key' in blit. key=0 means draw 0s as foreground, 1s as background.
+                      // So, if desired color is 1, key is -1 (default, draw 1s). If color is 0, key is 0 (draw 0s).
+                       code += `        "color": ${el.color},\n`; # This color is used by draw_elements to determine blit key.
                  }
 
-                if (el.type === 'rect' || el.type === 'circle') {
+                if (el.type.startsWith('rect') || el.type.startsWith('circle')) {
                     code += `        "fill": ${el.fill},\n`;
                 }
 
-                 // Add animation data (if any) for the user's reference
+                 // Add animation data (if any) for the user's reference and potential use
                  if (el.animation) {
-                     code += `        # Animation Data (For User Reference) -\n`;
-                     // Store start position explicitly in animation data for the Python code
-                     let startX = el.type === 'line' ? el.x1 : (el.type === 'circle' || el.type === 'filled-circle' ? el.cx : el.x);
-                     let startY = el.type === 'line' ? el.y1 : (el.type === 'circle' || el.type === 'filled-circle' ? el.cy : el.y);
-
                      code += `        "animation": {\n`;
                      code += `            "type": "${el.animation.type}", # e.g., 'path'\n`;
-                     code += `            "startX": ${startX}, "startY": ${startY},\n`;
+                     // Use the stored animation start points
+                     code += `            "startX": ${el.animation.startX}, "startY": ${el.animation.startY},\n`;
                      code += `            "endX": ${el.animation.endX}, "endY": ${el.animation.endY},\n`;
                      code += `            "steps": ${el.animation.steps}\n`;
                      code += `        },\n`;
@@ -1707,107 +1897,157 @@
             code += `        el_type = el["type"]\n`;
              code += `        color = el.get("color", 1) # Default color 1 if not specified\n`;
             code += `        fill = el.get("fill", False)\n\n`;
-            code += `        if el_type == "pixel":\n`;
-            code += `            display.pixel(el["x"], el["y"], color)\n`;
-            code += `        elif el_type == "line":\n`;
-            code += `            display.line(el["x1"], el["y1"], el["x2"], el["y2"], color)\n`;
+            code += `        # Get position based on element type's primary coordinates\n`;
+            code += `        if el_type == "line":\n`;
+            code += `            x1, y1, x2, y2 = el["x1"], el["y1"], el["x2"], el["y2"]\n`;
+            code += `            display.line(x1, y1, x2, y2, color)\n`;
             code += `        elif el_type in ["rect", "filled-rect"]:\n`;
+            code += `            x, y, w, h = el["x"], el["y"], el["width"], el["height"]\n`;
             code += `            if fill:\n`;
-            code += `                display.fill_rect(el["x"], el["y"], el["width"], el["height"], color)\n`;
+            code += `                display.fill_rect(x, y, w, h, color)\n`;
             code += `            else:\n`;
-            code += `                display.rect(el["x"], el["y"], el["width"], el["height"], color)\n`;
+            code += `                display.rect(x, y, w, h, color)\n`;
             code += `        elif el_type in ["circle", "filled-circle"]:\n`;
-            code += `            if fill:\n`;
-            code += `                # Note: SSD1306 library might not have fill_circle. This is a placeholder.\n`;
-                // Use ellipse function for filled circle if fill_circle is not available? Need to check library.
-                // The user-provided library HAS circle and fill. Let's use that.
-            code += `                # display.fill_circle(el["cx"], el["cy"], el["radius"], color) # Placeholder if library had it\n`;
-            code += `                # Using the circle function from the provided library for filled circles:\n`;
-            code += `                # The provided library's circle method has a 'fill' parameter.\n`;
-            code += `                display.circle(el["cx"], el["cy"], el["radius"], color, fill=True)\n`;
-            code += `            else:\n`;
-            code += `                display.circle(el["cx"], el["cy"], el["radius"], color, fill=False)\n`;
+             // Circles store cx, cy, radius
+            code += `            cx, cy, r = el["cx"], el["cy"], el["radius"]\n`;
+            code += `            # Use the circle function from the provided library which has a 'fill' parameter.\n`;
+            code += `            display.circle(cx, cy, r, color, fill=fill)\n`;
             code += `        elif el_type == "text":\n`;
-            code += `            display.text(el["text"], el["x"], el["y"], color)\n`;
+             // Text stores x, y (top-left)
+            code += `            x, y, text_content = el["x"], el["y"], el["text"]\n`;
+            code += `            display.text(text_content, x, y, color)\n`;
             code += `        elif el_type == "sprite":\n`;
+             // Sprites store x, y (top-left), spriteDataRef, width, height
+            code += `            x, y, sprite_data, w, h = el["x"], el["y"], el["spriteDataRef"], el["width"], el["height"]\n`;
              code += `            # Assumes your SSD1306 library has a blit method compatible with framebuf\n`;
-             code += `            # Or you might need a custom sprite drawing function.\n`;
-             code += `            # The provided library has blit which works with framebuf objects. Create a temporary framebuf.\n`;
-             code += `            sprite_buf = framebuf.FrameBuffer(el["spriteDataRef"], el["width"], el["height"], framebuf.MONO_VLSB)\n`;
-             code += `            display.blit(sprite_buf, el["x"], el["y"])\n`;
-             code += `            # Note: Color tinting for blit might require manual pixel manipulation or a different blit method.\n`;
-             code += `            # The simple blit copies pixels as is (1s are 'on', 0s are 'off').\n`;
-             code += `            # If color is 0, you might want to blit the inverse or skip.\n`;
-             code += `            if color == 0:\n`;
-             code += `                # If color is off (0), effectively draw with the background color.\n`;
-             code += `                # This might require blitting an inverse or using a different method.\n`;
-             code += `                # For monochrome, drawing with color 0 on a black background means turning pixels OFF.\n`;
-             code += `                # The default blit with MONO_VLSB assumes 1s turn pixels ON.\n`;
-             code += `                # If you need to draw sprites that turn pixels OFF, a custom function is needed.\n`;
-             code += `                # For simplicity, this generated code assumes color=1 means ON pixels from sprite data.\n`;
-             code += `                pass # Current blit handles 1 (on) pixels. Ignore if color is 0.\n`;
+             code += `            # Create a temporary framebuf for the sprite data.\n`;
+             code += `            sprite_buf = framebuf.FrameBuffer(sprite_data, w, h, framebuf.MONO_VLSB)\n`;
+             code += `            # Blit the sprite. Color is handled by the 'key' parameter in blit.\n`;
+             code += `            # Default blit (key=-1) draws source 1s with foreground, 0s with background.\n`;
+             code += `            # To draw source 1s with background color (color=0), use key=1.\n`;
+             code += `            # The foreground/background colors for blit are set when the display object is created (usually 1 and 0).\n`;
+             code += `            # Let's use the 'color' property from the element data to determine the key.\n`;
+             code += `            # If el["color"] is 1 (on), use default behavior (key=-1, draws source 1s as ON pixels).\n`;
+             code += `            # If el["color"] is 0 (off), use key=1 (draws source 1s as OFF pixels).\n`;
+             code += `            # Note: This assumes sprite data contains the pixels that *should be changed*.\n`;
+             code += `            # If sprite color is 0, we want to turn pixels OFF. Blitting with key=1 does this.\n`;
+             code += `            # If sprite color is 1, we want to turn pixels ON. Blitting with key=-1 does this.\n`;
+             code += `            blit_key = -1 if color == 1 else 1 # Use key=1 to blit 1s as background color (0)\n`;
+             code += `            display.blit(sprite_buf, x, y, blit_key)\n`; # Pass the calculated key
 
+             code += `        elif el_type == "pixel":\n`;
+             code += `             x, y = el["x"], el["y"]\n`;
+             code += `             display.pixel(x, y, color)\n`;
 
             code += `\n`;
 
 
             // Main execution block with animation suggestion
             code += `# --- Main Execution ---\n`;
-            code += `if __name__ == "__main__":\n`;
-            code += `    print("Drawing initial state...")\n`;
-            code += `    display.fill(0) # Clear the display buffer\n`;
-            code += `    draw_elements(display, elements_data) # Draw all elements\n`;
-            code += `    display.show() # Push the buffer to the display\n`;
-            code += `    #time.sleep(2) # Display initial state for a few seconds\n\n`;
+            code += `# Define your display object before running this.\n`;
+            code += `# For example: display = ssd1306.SSD1306_I2C(128, 64, i2c)\n\n`;
 
-            code += `    # --- Animation Example (Modify as needed) ---\n`;
-            code += `    # To animate elements, you would typically update their positions\n`;
-            code += `    # in the 'elements_data' list within a loop.\n`;
-            code += `    # For elements with animation data defined:\n`;
-            code += `    # animated_element = next((el for el in elements_data if "animation" in el), None)\n`; # Find first animated element
-            code += `\n`;
-            code += `    # if animated_element:\n`;
-            code += `    #     anim = animated_element["animation"]\n`;
-            code += `    #     print(f"Starting animation for {animated_element['type']}...")\n`;
-            code += `    #     start_x = anim["startX"]\n`;
-            code += `    #     start_y = anim["startY"]\n`;
-            code += `    #     end_x = anim["endX"]\n`;
-            code += `    #     end_y = anim["endY"]\n`;
-            code += `    #     steps = anim["steps"]\n`;
-            code += `\n`;
-            code += `    #     for step in range(steps + 1):\n`;
-            code += `    #         # Calculate current position using linear interpolation\n`;
-            code += `    #         current_x = int(start_x + (end_x - start_x) * (step / steps))\n`;
-            code += `    #         current_y = int(start_y + (end_y - start_y) * (step / steps))\n`;
-            code += `\n`;
-            code += `    #         # Update the element's position in the list\n`;
-            code += `    #         # Note: If animating a line or circle, you might need to update x1/y1/x2/y2 or cx/cy\n`;
-            code += `    #         if animated_element["type"] == "line":\n`;
-            code += `    #             # Move both points relative to the start point's movement\n`;
-            code += `    #             dx = current_x - start_x\n`;
-            code += `    #             dy = current_y - start_y\n`;
-            code += `    #             animated_element["x1"] = start_x + dx # The 'start_x' in anim is the line's initial x1\n`;
-            code += `    #             animated_element["y1"] = start_y + dy # The 'start_y' in anim is the line's initial y1\n`;
-            code += `    #             # Need original x2, y2 to calculate delta movement correctly\n`;
-            code += `    #             # This gets complicated quickly with different element origins and animation types.\n`;
-            code += `    #             # Consider storing original x2, y2 in animation data or using a more robust animation system.\n`;
-            code += `    #             pass # Simplified: User implements complex element-specific updates\n`;
-            code += `    #         elif animated_element["type"] in ["circle", "filled-circle"]:\n`;
-            code += `    #              animated_element["cx"] = current_x\n`;
-            code += `    #              animated_element["cy"] = current_y\n`;
-            code += `    #              # Also update x,y for bounding box if needed\n`;
-            code += `    #              animated_element["x"] = current_x - animated_element["radius"]\n`;
-            code += `    #              animated_element["y"] = current_y - animated_element["radius"]\n`;
-            code += `    #         else:\n`;
-            code += `    #             animated_element["x"] = current_x\n`;
-            code += `    #             animated_element["y"] = current_y\n`;
-            code += `\n`;
-            code += `    #         display.fill(0) # Clear the previous frame\n`;
-            code += `    #         draw_elements(display, elements_data) # Draw elements at their new positions\n`;
-            code += `    #         display.show() # Update the display\n`;
-            code += `    #         #time.sleep(0.05) # Add a small delay (e.g., ~20 FPS)\n`;
-            code += `\n`;
-            code += `    print("Done.")\n`;
+
+            code += `# Function to find an element by a property (like type, or maybe an added 'name' property)\n`;
+            code += `# You might want to add a 'name' property to elements in the editor for easier reference.\n`;
+            code += `# def find_element(elements_list, element_name):\n`;
+            code += `#     for el in elements_list:\n`;
+            code += `#         if el.get("name") == element_name:\n`;
+            code += `#             return el\n`;
+            code += `#     return None\n\n`;
+
+
+            code += `# --- Draw Static Elements ---\n`;
+            code += `# Filter elements without animation for the initial static draw\n`;
+            code += `static_elements = [el for el in elements_data if "animation" not in el]\n`;
+            code += `print("Drawing static elements...")\n`;
+            code += `display.fill(0) # Clear the display buffer\n`;
+            code += `draw_elements(display, static_elements)\n`;
+            code += `display.show() # Push the buffer to the display\n`;
+            code += `# time.sleep(2) # Optional: display static state for a few seconds\n\n`;
+
+
+            code += `# --- Animation Loop Example (Modify as needed) ---\n`;
+            code += `# This is a basic example for one animated element.\n`;
+            code += `# For multiple animations or more complex timing, you'll need a more advanced loop.\n`;
+            code += `# Find elements with animation data\n`;
+            code += `animated_elements = [el for el in elements_data if "animation" in el]\n\n`;
+
+            code += `# if animated_elements:\n`;
+            code += `#     print(f"Starting animation for {len(animated_elements)} element(s)...")\n`;
+            code += `#     # Keep track of current state for animated elements\n`;
+            code += `#     current_animated_state = {el["id"]: {"x": el["animation"]["startX"], "y": el["animation"]["startY"], "progress": 0} for el in animated_elements if "id" in el}\n`; # Assumes 'id' was added in editor
+
+
+            code += `#     # Animation loop\n`;
+            code += `#     total_animation_steps = max([el["animation"]["steps"] for el in animated_elements]) if animated_elements else 0\n`; # Find max steps if animating multiple
+
+            code += `#     for step in range(total_animation_steps + 1):\n`;
+            code += `#         display.fill(0) # Clear the previous frame\n`;
+
+            code += `#         # Redraw static elements\n`;
+            code += `#         draw_elements(display, static_elements)\n`;
+
+            code += `#         # Draw animated elements at their current step position\n`;
+            code += `#         for el in animated_elements:\n`;
+            code += `#             anim = el["animation"]\n`;
+            code += `#             # Calculate current step for this specific element (if needed, or just use global step)\n`;
+            code += `#             # For simple linear animation across total_animation_steps:\n`;
+            code += `#             current_step_for_el = min(step, anim["steps"]) # Cap at element's total steps\n`;
+
+            code += `#             # Calculate interpolated position\n`;
+            code += `#             # Ensure division by zero is handled if steps is 0 (editor prevents this, but good practice)\n`;
+            code += `#             progress = current_step_for_el / anim["steps"] if anim["steps"] > 0 else 1\n`;
+            code += `#             current_x = int(anim["startX"] + (anim["endX"] - anim["startX"]) * progress)\n`;
+            code += `#             current_y = int(anim["startY"] + (anim["endY"] - anim["startY"]) * progress)\n`;
+
+            code += `#             # Create a temporary element dictionary for drawing at the current position\n`;
+            code += `#             # This avoids modifying the original elements_data list during animation\n`;
+            code += `#             temp_el = dict(el) # Create a copy\n`;
+
+            code += `#             # Update position properties in the temporary dictionary\n`;
+            code += `#             if temp_el["type"] == "line":\n`;
+            code += `#                 # Move both points relative to the stored animation start (which was the line's initial x1, y1)\n`;
+            code += `#                 # Need the original line's x1, y1, x2, y2 from the elements_data list (or initial state)\n`;
+            code += `#                 # Finding original points requires referencing the element from the elements_data list that hasn't been position-modified in the loop.\n`;
+            code += `#                 # A better approach might be to store original geometry in the animation dict or use indices.\n`;
+            code += `#                 # Simplified: Assuming anim["startX"], anim["startY"] were the *original* x1, y1:\n`;
+            code += `#                 original_x1 = anim["startX"]\n`;
+            code += `#                 original_y1 = anim["startY"]\n`;
+            code += `#                 # You would need original x2, y2 here. Let's assume they are in the original 'el' dict before modification.\n`;
+            code += `#                 # This animation structure needs original geometry accessible inside the loop.\n`;
+            code += `#                 # Let's add original geometry to animation data during generation for clarity.\n`;
+            code += `#                 original_x2 = anim.get("original_x2", el.get("x2")) # Need to add original_x2 to anim data\n`;
+            code += `#                 original_y2 = anim.get("original_y2", el.get("y2")) # Need to add original_y2 to anim data\n`;
+            code += `#                 dx = current_x - original_x1\n`;
+            code += `#                 dy = current_y - original_y1\n`;
+            code += `#                 temp_el["x1"] = original_x1 + dx\n`;
+            code += `#                 temp_el["y1"] = original_y1 + dy\n`;
+            code += `#                 if original_x2 is not None and original_y2 is not None:\n`;
+            code += `#                     temp_el["x2"] = original_x2 + dx\n`;
+            code += `#                     temp_el["y2"] = original_y2 + dy\n`;
+            code += `#             elif temp_el["type"] in ["circle", "filled-circle"]:\n`;
+            code += `#                 # Update center (cx, cy)\n`;
+            code += `#                 temp_el["cx"] = current_x\n`;
+            code += `#                 temp_el["cy"] = current_y\n`;
+            code += `#                 # Update stored x,y (top-left) based on new center for drawing function (it uses cx, cy anyway)\n`;
+            code += `#                 temp_el["x"] = current_x - temp_el["radius"]\n`;
+            code += `#                 temp_el["y"] = current_y - temp_el["radius"]\n`;
+            code += `#             else:\n`;
+            code += `#                 # Update x, y (for pixel, rect, text, sprite)\n`;
+            code += `#                 temp_el["x"] = current_x\n`;
+            code += `#                 temp_el["y"] = current_y\n`;
+
+            code += `#             # Draw the element at its temporary animated position\n`;
+            code += `#             draw_elements(display, [temp_el]) # Draw this single element\n`;
+
+            code += `#         display.show() # Update the display\n`;
+            code += `#         #time.sleep(0.05) # Add a small delay (e.g., ~20 FPS)\n`;
+            code += `# else:\n`;
+            code += `#     print("No animated elements found.")\n`;
+
+
+            code += `print("Code execution finished.")\n`;
 
 
             generatedCodePre.textContent = code;
