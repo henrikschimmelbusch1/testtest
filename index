@@ -1,0 +1,1375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSD1306 Simulator & Code Generator - Advanced</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        :root {
+            --grid-color: rgba(0, 150, 255, 0.2);
+            --grid-size: 8px; /* Default grid size in simulator pixels */
+        }
+        body { font-family: 'Inter', sans-serif; overscroll-behavior: none; }
+        #simulator-area { position: relative; overflow: hidden; background-color: #555; /* Area around canvas */ }
+        #canvas-container {
+            position: relative;
+            border: 1px solid #777;
+            transform-origin: top left; /* For zooming */
+            background-color: #000; /* Ensure container background is black */
+            overflow: hidden; /* Clip elements outside canvas bounds */
+        }
+        #ssd1306-canvas {
+            display: block; /* Remove extra space below canvas */
+            background-color: #000;
+            image-rendering: pixelated;
+            cursor: default;
+            touch-action: none;
+            position: absolute; /* Needed for grid overlay */
+            top: 0; left: 0;
+        }
+        #grid-overlay {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            background-image:
+                linear-gradient(to right, var(--grid-color) 1px, transparent 1px),
+                linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px);
+            background-size: calc(var(--grid-size) * var(--canvas-scale-x, 4)) calc(var(--grid-size) * var(--canvas-scale-y, 4));
+            display: none; /* Hidden by default */
+            z-index: 5; /* Below selection box */
+        }
+        #canvas-container.show-grid #grid-overlay { display: block; }
+
+        .selected-outline { /* ... (same) ... */
+            position: absolute; border: 1px dashed rgba(0, 150, 255, 0.7);
+            pointer-events: none; box-sizing: border-box; z-index: 10;
+        }
+        .resize-handle { /* ... (same) ... */
+            position: absolute; width: 8px; height: 8px; background-color: rgba(0, 150, 255, 0.7);
+            border: 1px solid white; border-radius: 1px; cursor: pointer; pointer-events: auto; z-index: 11;
+        }
+        .resize-handle.tl { top: -4px; left: -4px; cursor: nwse-resize; }
+        .resize-handle.tr { top: -4px; right: -4px; cursor: nesw-resize; }
+        .resize-handle.bl { bottom: -4px; left: -4px; cursor: nesw-resize; }
+        .resize-handle.br { bottom: -4px; right: -4px; cursor: nwse-resize; }
+
+        /* Visual indicators for locked/hidden elements */
+        .element-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; /* Allow interaction with element below */
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.5rem; /* Adjust as needed */
+            z-index: 1; /* Above element drawing, below selection */
+        }
+        .locked-overlay { background-color: rgba(100, 100, 100, 0.3); color: rgba(255, 255, 255, 0.5); }
+        .hidden-overlay { background-color: rgba(50, 50, 50, 0.5); color: rgba(200, 200, 200, 0.4); }
+
+        .modal { /* ... (same) ... */
+            display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%;
+            overflow: auto; background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content { /* ... (same) ... */
+             background-color: #fefefe; margin: 10% auto; padding: 20px;
+            border: 1px solid #888; width: 80%; max-width: 400px; border-radius: 8px;
+        }
+        .close-button { /* ... (same) ... */
+            color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;
+        }
+        .close-button:hover, .close-button:focus { color: black; text-decoration: none; }
+
+        #micropython-code { /* ... (same) ... */
+             font-family: monospace; font-size: 0.8rem; white-space: pre; overflow-x: auto;
+             background-color: #2d2d2d; color: #cccccc; border: 1px solid #444;
+             border-radius: 4px; padding: 10px; min-height: 150px; resize: vertical;
+        }
+        .shape-properties { padding-top: 5px; padding-bottom: 5px; }
+        #coords-display { /* ... (same) ... */
+            font-family: monospace; font-size: 0.9rem; color: #333; background-color: rgba(255, 255, 255, 0.7);
+            padding: 2px 8px; border-radius: 4px; border: 1px solid #ccc; margin-top: 5px;
+        }
+        #prop-points { font-family: monospace; font-size: 0.8rem; min-height: 60px; }
+        button { transition: background-color 0.15s ease-in-out, opacity 0.15s ease-in-out; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #animation-controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
+        /* Style for property header icons */
+        .prop-header-icon { cursor: pointer; margin-left: 5px; color: #666; }
+        .prop-header-icon:hover { color: #000; }
+        .prop-header-icon.active { color: #007bff; }
+        /* Style for toolbar buttons */
+        .toolbar-btn {
+             background-color: #e2e8f0; border: 1px solid #cbd5e1; padding: 4px 8px; border-radius: 4px;
+             font-size: 0.9rem; display: inline-flex; align-items: center; justify-content: center;
+        }
+        .toolbar-btn:hover { background-color: #cbd5e1; }
+        .toolbar-btn:disabled { background-color: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }
+        .toolbar-btn i { margin-right: 4px; } /* Space between icon and text */
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100 flex flex-col md:flex-row h-screen overflow-hidden">
+
+    <div class="w-full md:w-80 bg-white p-4 space-y-4 overflow-y-auto shadow-lg flex flex-col"> <h2 class="text-xl font-semibold text-gray-700">Controls</h2>
+
+        <div class="flex flex-wrap gap-2 border-b pb-3 mb-3 border-gray-200">
+             <button id="save-btn" title="Save Design (Ctrl+S)" class="toolbar-btn"><i class="fas fa-save"></i> Save</button>
+             <button id="load-btn" title="Load Design (Ctrl+O)" class="toolbar-btn"><i class="fas fa-folder-open"></i> Load</button>
+             <button id="undo-btn" title="Undo (Ctrl+Z)" class="toolbar-btn" disabled><i class="fas fa-undo"></i> Undo</button>
+             <button id="redo-btn" title="Redo (Ctrl+Y)" class="toolbar-btn" disabled><i class="fas fa-redo"></i> Redo</button>
+             <button id="copy-btn" title="Copy (Ctrl+C)" class="toolbar-btn" disabled><i class="fas fa-copy"></i> Copy</button>
+             <button id="paste-btn" title="Paste (Ctrl+V)" class="toolbar-btn" disabled><i class="fas fa-paste"></i> Paste</button>
+        </div>
+
+        <div class="space-y-2 border-b pb-4 border-gray-200">
+            <h3 class="text-lg font-medium text-gray-600">Add Element</h3>
+            <div class="flex space-x-2">
+                <select id="add-element-type" class="flex-grow border border-gray-300 rounded px-2 py-1 text-sm">
+                    <option value="text">Text</option>
+                    <option value="rectangle">Rectangle</option>
+                    <option value="line">Line</option>
+                    <option value="circle">Circle</option>
+                    <option value="triangle">Triangle</option>
+                    <option value="ellipse">Ellipse</option>
+                    <option value="polygon">Polygon</option>
+                    <option value="round_rect">Round Rectangle</option>
+                    <option value="icon">Icon</option>
+                </select>
+                <button id="add-element-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-1 px-3 rounded text-sm">Add</button>
+            </div>
+        </div>
+
+        <div class="space-y-2 border-b pb-4 border-gray-200">
+             <h3 class="text-lg font-medium text-gray-600">Layers</h3>
+             <div class="grid grid-cols-2 gap-2">
+                 <button id="bring-forward-btn" title="Bring Forward" class="toolbar-btn" disabled><i class="fas fa-arrow-up"></i> Forward</button>
+                 <button id="send-backward-btn" title="Send Backward" class="toolbar-btn" disabled><i class="fas fa-arrow-down"></i> Backward</button>
+                 <button id="bring-front-btn" title="Bring to Front" class="toolbar-btn" disabled><i class="fas fa-angle-double-up"></i> Front</button>
+                 <button id="send-back-btn" title="Send to Back" class="toolbar-btn" disabled><i class="fas fa-angle-double-down"></i> Back</button>
+             </div>
+        </div>
+
+         <div id="properties-panel" class="space-y-1 hidden flex-grow">
+             <div class="flex justify-between items-center border-b pb-1 mb-2 border-gray-200">
+                 <h3 class="text-lg font-medium text-gray-600">Properties</h3>
+                 <div>
+                     <i id="prop-visible-toggle" title="Toggle Visibility" class="fas fa-eye prop-header-icon"></i>
+                     <i id="prop-locked-toggle" title="Toggle Lock" class="fas fa-lock prop-header-icon"></i>
+                 </div>
+             </div>
+
+             <div id="text-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="rectangle-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="line-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="circle-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="triangle-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="ellipse-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="polygon-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="round_rect-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="icon-properties" class="shape-properties hidden space-y-1"> /* ... inputs ... */ </div>
+             <div id="animation-properties" class="shape-properties mt-3 pt-3 border-t border-gray-200 space-y-1"> /* ... inputs ... */ </div>
+
+             <button id="delete-btn" title="Delete Element (Del/Backspace)" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded mt-4" disabled>Delete Element</button>
+        </div>
+
+        <div class="space-y-2 pt-4 border-t border-gray-200">
+            <h3 class="text-lg font-medium text-gray-600">View</h3>
+            <div class="flex items-center space-x-2">
+                <label for="display-size" class="text-sm font-medium text-gray-500">Size:</label>
+                <select id="display-size" class="flex-grow border border-gray-300 rounded px-2 py-1 text-sm">
+                    <option value="128x64">128 x 64</option>
+                    <option value="128x32">128 x 32</option>
+                    <option value="96x16">96 x 16</option>
+                </select>
+            </div>
+             <div class="flex items-center space-x-2">
+                 <label class="text-sm font-medium text-gray-500">Zoom:</label>
+                 <button id="zoom-out-btn" class="toolbar-btn w-8">-</button>
+                 <span id="zoom-level" class="text-sm text-gray-600 w-10 text-center">100%</span>
+                 <button id="zoom-in-btn" class="toolbar-btn w-8">+</button>
+             </div>
+             <div class="flex items-center space-x-2">
+                 <input type="checkbox" id="grid-toggle" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                 <label for="grid-toggle" class="text-sm font-medium text-gray-500">Show Grid</label>
+                 <input type="checkbox" id="snap-toggle" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                 <label for="snap-toggle" class="text-sm font-medium text-gray-500">Snap to Grid</label>
+             </div>
+        </div>
+
+        <div id="global-animation-controls" class="pt-4 border-t border-gray-200 space-y-2">
+             <h3 class="text-lg font-medium text-gray-600">Animation Preview</h3>
+             <div class="flex space-x-2">
+                <button id="play-btn" title="Play/Pause (P)" class="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-1 px-3 rounded text-sm"><i class="fas fa-play mr-1"></i>Play</button>
+                <button id="pause-btn" title="Play/Pause (P)" class="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-1 px-3 rounded text-sm" disabled><i class="fas fa-pause mr-1"></i>Pause</button>
+             </div>
+        </div>
+
+        <div class="space-y-2 pt-4 border-t border-gray-200 mt-auto"> <h3 class="text-lg font-medium text-gray-600">Code Generation</h3>
+             <button id="generate-code-btn" class="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded">Generate MicroPython Code</button>
+        </div>
+    </div>
+
+    <div id="simulator-area" class="flex-1 flex flex-col items-center justify-center p-4 bg-gray-300 relative overflow-y-auto">
+        <div id="canvas-outer-container" class="relative flex-shrink-0">
+             <div id="canvas-container" class="relative">
+                 <canvas id="ssd1306-canvas" width="128" height="64"></canvas>
+                 <div id="grid-overlay"></div>
+                 <div id="selection-box" class="hidden">
+                    <div class="selected-outline"></div>
+                    <div class="resize-handle tl"></div> <div class="resize-handle tr"></div>
+                    <div class="resize-handle bl"></div> <div class="resize-handle br"></div>
+                </div>
+                 <div id="element-overlays"></div>
+             </div>
+        </div>
+        <div id="coords-display" class="absolute bottom-2 left-2 z-20">Coords: (-, -)</div>
+
+         <div class="w-full max-w-4xl mt-4 flex-grow flex flex-col" style="min-height: 150px;">
+            <label for="micropython-code" class="text-sm font-medium text-gray-600 mb-1">Generated MicroPython Code:</label>
+            <textarea id="micropython-code" readonly class="flex-grow w-full"></textarea>
+         </div>
+    </div>
+
+    <div id="text-modal" class="modal"> /* ... (same as before) ... */ </div>
+
+
+    <script>
+        // --- Constants & State ---
+        let SCREEN_WIDTH = 128; // Default, can be changed
+        let SCREEN_HEIGHT = 64; // Default, can be changed
+        const PIXEL_COLOR = '#FFFFFF';
+        let CANVAS_SCALE_X = 4; // Base scale for 1 simulator pixel = 4 screen pixels
+        let CANVAS_SCALE_Y = 4;
+        let currentZoom = 1.0; // Zoom factor applied on top of base scale
+        const GRID_SIZE = 8; // Grid size in simulator pixels
+
+        let elements = [];
+        let selectedElement = null;
+        let isDragging = false;
+        let isResizing = false;
+        let dragStartX, dragStartY;
+        let dragOffsetX, dragOffsetY;
+        let resizeHandleType = null;
+        let animationFrameId = null;
+        let isPlaying = false;
+        let showGrid = false;
+        let snapToGrid = false;
+        let history = []; // For undo/redo
+        let historyIndex = -1; // Pointer to current state in history
+        let copiedElementData = null; // For copy/paste
+
+        // --- Preset Icons ---
+        const presetIcons = { /* ... (Includes battery, arrows, play, pause AND new ones) ... */
+             "battery_full": { width: 24, height: 8, data: [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0] },
+            "battery_mid": { width: 24, height: 8, data: [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0] },
+             "battery_empty": { width: 24, height: 8, data: [0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0] },
+            "arrow_up": { width: 8, height: 8, data: [0,0,0,1,1,0,0,0,0,0,1,1,1,1,0,0,0,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0] },
+             "arrow_down": { width: 8, height: 8, data: [0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,0,0,0,1,1,1,1,0,0,0,0,0,1,1,0,0,0] },
+             "arrow_left": { width: 8, height: 8, data: [0,0,0,1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0] },
+            "arrow_right": { width: 8, height: 8, data: [0,0,0,0,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,1,1,1,0,0,0,0,1,1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0] },
+            "play": { width: 8, height: 8, data: [0,1,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,1,0,0,0,0,0,1,1,1,1,0,0,0,0,1,1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0] },
+            "pause": { width: 8, height: 8, data: [0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0] },
+            "wifi": { width: 16, height: 8, data: [0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,1,1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,0,0,1,1,0,0,1,1,0,0,1,0,0,0,1,1,0,1,1,0,0,0,0,1,1,0,1,1,0,1,0,1,1,0,0,1,1,1,1,1,1,0,0,1,1,0,1,0,1,1,1,1,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1] },
+            "settings": { width: 16, height: 16, data: [0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,1,1,0,0,1,1,0,0,1,1,0,0,0,0,0,1,0,0,1,0,1,1,0,1,0,0,1,0,0,0,1,0,0,0,1,1,0,0,1,1,0,0,0,1,0,1,0,0,1,0,0,0,0,0,0,1,0,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,0,0,1,0,0,0,0,0,0,1,0,0,1,1,0,0,1,1,0,1,1,1,1,0,1,0,0,1,1,0,0,0,1,0,0,1,1,0,1,0,0,1,0,0,0,0,0,1,0,0,1,0,0,1,0,1,1,0,1,0,0,1,0,0,0,0,0,1,1,0,0,1,1,0,0,1,1,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0] },
+            "checkmark": { width: 8, height: 8, data: [0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,1,0,1,0,0,0,1,1,0,0,1,1,0,1,1,0,0,0,0,1,1,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0] },
+            "cross": { width: 8, height: 8, data: [1,0,0,0,0,0,0,1,0,1,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0,1,0,1,0,0,0,0,0,0,1] }
+        };
+
+
+        // --- DOM Elements ---
+        // (Get elements as before)
+        const canvas = document.getElementById('ssd1306-canvas');
+        const ctx = canvas.getContext('2d');
+        const simulatorArea = document.getElementById('simulator-area');
+        const canvasOuterContainer = document.getElementById('canvas-outer-container');
+        const canvasContainer = document.getElementById('canvas-container');
+        const addElementTypeSelect = document.getElementById('add-element-type');
+        const addElementBtn = document.getElementById('add-element-btn');
+        const deleteBtn = document.getElementById('delete-btn');
+        const propertiesPanel = document.getElementById('properties-panel');
+        const selectionBox = document.getElementById('selection-box');
+        const selectionOutline = selectionBox.querySelector('.selected-outline');
+        const resizeHandles = selectionBox.querySelectorAll('.resize-handle');
+        const generateCodeBtn = document.getElementById('generate-code-btn');
+        const codeOutputArea = document.getElementById('micropython-code');
+        const coordsDisplay = document.getElementById('coords-display');
+        const playBtn = document.getElementById('play-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        const saveBtn = document.getElementById('save-btn');
+        const loadBtn = document.getElementById('load-btn');
+        const undoBtn = document.getElementById('undo-btn');
+        const redoBtn = document.getElementById('redo-btn');
+        const copyBtn = document.getElementById('copy-btn');
+        const pasteBtn = document.getElementById('paste-btn');
+        const bringForwardBtn = document.getElementById('bring-forward-btn');
+        const sendBackwardBtn = document.getElementById('send-backward-btn');
+        const bringFrontBtn = document.getElementById('bring-front-btn');
+        const sendBackBtn = document.getElementById('send-back-btn');
+        const zoomInBtn = document.getElementById('zoom-in-btn');
+        const zoomOutBtn = document.getElementById('zoom-out-btn');
+        const zoomLevelSpan = document.getElementById('zoom-level');
+        const gridToggle = document.getElementById('grid-toggle');
+        const snapToggle = document.getElementById('snap-toggle');
+        const displaySizeSelect = document.getElementById('display-size');
+        const elementOverlaysDiv = document.getElementById('element-overlays');
+        const gridOverlay = document.getElementById('grid-overlay');
+
+        // Text Modal Elements
+        const textModal = document.getElementById('text-modal');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+        const modalTextInput = document.getElementById('modal-text-input');
+        const modalConfirmBtn = document.getElementById('modal-confirm-btn');
+
+
+        // --- Element Creation ---
+        function createElement(type, options = {}) {
+            // Add unique ID, locked, visible status to base element
+            const baseElement = {
+                id: options.id ?? (Date.now() + Math.random()), // Use provided ID if loading/pasting
+                type: type,
+                x: options.x ?? 10,
+                y: options.y ?? 10,
+                width: options.width ?? 30,
+                height: options.height ?? 10,
+                color: options.color ?? 1,
+                fill: options.fill ?? false,
+                visible: options.visible ?? true,
+                locked: options.locked ?? false,
+                // Animation properties
+                isAnimating: options.isAnimating ?? false,
+                animTargetX: options.animTargetX ?? null,
+                animTargetY: options.animTargetY ?? null,
+                animSpeed: options.animSpeed ?? 1,
+                draw: function(context) { /* ... default placeholder ... */ }
+            };
+
+            // --- Specific Element Types (add locked/visible checks in draw if needed) ---
+             switch(type) {
+                case 'text':
+                    return {
+                        ...baseElement,
+                        text: options.text || 'Text',
+                        width: options.width || (options.text ? options.text.length * 5 : 30),
+                        height: options.height || 8,
+                        draw: function(ctx) {
+                            if (!this.visible) return;
+                            const drawX = this.x ?? baseElement.x; const drawY = this.y ?? baseElement.y;
+                            const drawText = this.text ?? 'Text';
+                            ctx.fillStyle = PIXEL_COLOR; ctx.font = `8px sans-serif`;
+                            ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+                            ctx.fillText(drawText, drawX, drawY);
+                        }
+                    };
+                case 'rectangle':
+                     return {
+                         ...baseElement, fill: options.fill ?? false,
+                        draw: function(ctx) {
+                            if (!this.visible) return;
+                            const drawX = this.x ?? baseElement.x; const drawY = this.y ?? baseElement.y;
+                            const drawW = this.width ?? baseElement.width; const drawH = this.height ?? baseElement.height;
+                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fillRect(drawX, drawY, drawW, drawH); }
+                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.strokeRect(drawX, drawY, drawW, drawH); }
+                        }
+                    };
+                case 'line': {
+                    const x1_l = options.x ?? 5; const y1_l = options.y ?? 5;
+                    const x2_l = options.x2 ?? (x1_l + 30); const y2_l = options.y2 ?? (y1_l + 10);
+                    return {
+                        ...baseElement, x: x1_l, y: y1_l, x2: x2_l, y2: y2_l,
+                        width: Math.abs(x2_l - x1_l), height: Math.abs(y2_l - y1_l),
+                        draw: function(ctx) {
+                            if (!this.visible) return;
+                            ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1;
+                            ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.x2, this.y2); ctx.stroke();
+                        }
+                    };
+                }
+                 case 'circle': {
+                     const cx_c = options.cx ?? 30; const cy_c = options.cy ?? 30; const r_c = options.r ?? 15;
+                    return {
+                        ...baseElement, cx: cx_c, cy: cy_c, r: r_c, fill: options.fill ?? false,
+                        x: cx_c - r_c, y: cy_c - r_c, width: r_c * 2, height: r_c * 2,
+                        draw: function(ctx) {
+                            if (!this.visible) return;
+                            ctx.beginPath(); ctx.arc(this.cx, this.cy, this.r, 0, Math.PI * 2);
+                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fill(); }
+                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.stroke(); }
+                        }
+                    };
+                 }
+                case 'triangle': {
+                     const x0_t = options.x0 ?? 10; const y0_t = options.y0 ?? 50;
+                     const x1_t = options.x1 ?? 60; const y1_t = options.y1 ?? 50;
+                     const x2_t = options.x2 ?? 35; const y2_t = options.y2 ?? 10;
+                     const { minX: minXt, minY: minYt, maxX: maxXt, maxY: maxYt } = calculateBoundingBox([[x0_t,y0_t],[x1_t,y1_t],[x2_t,y2_t]]);
+                    return {
+                        ...baseElement, x0: x0_t, y0: y0_t, x1: x1_t, y1: y1_t, x2: x2_t, y2: y2_t,
+                        fill: options.fill ?? false, x: minXt, y: minYt, width: maxXt - minXt, height: maxYt - minYt,
+                        draw: function(ctx) {
+                            if (!this.visible) return;
+                            ctx.beginPath(); ctx.moveTo(this.x0, this.y0); ctx.lineTo(this.x1, this.y1); ctx.lineTo(this.x2, this.y2); ctx.closePath();
+                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fill(); }
+                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.stroke(); }
+                        }
+                    };
+                 }
+                case 'ellipse': {
+                    const cx_e = options.cx ?? 64; const cy_e = options.cy ?? 32;
+                    const rx_e = options.rx ?? 30; const ry_e = options.ry ?? 15;
+                    return {
+                        ...baseElement, cx: cx_e, cy: cy_e, rx: rx_e, ry: ry_e, fill: options.fill ?? false,
+                        x: cx_e - rx_e, y: cy_e - ry_e, width: rx_e * 2, height: ry_e * 2,
+                        draw: function(ctx) {
+                            if (!this.visible) return;
+                            ctx.beginPath(); ctx.ellipse(this.cx, this.cy, this.rx, this.ry, 0, 0, Math.PI * 2);
+                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fill(); }
+                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.stroke(); }
+                        }
+                    };
+                 }
+                 case 'polygon': {
+                    const defaultPoints = options.points ?? [[10,30], [30,10], [50,30], [50,50], [10,50]];
+                    const { minX, minY, maxX, maxY } = calculateBoundingBox(defaultPoints);
+                    return {
+                        ...baseElement, points: defaultPoints.map(p=>[...p]), /* Ensure deep copy */
+                        fill: options.fill ?? false, x: minX, y: minY, width: maxX - minX, height: maxY - minY,
+                        draw: function(ctx) {
+                            if (!this.visible || !this.points || this.points.length < 2) return;
+                            ctx.beginPath(); ctx.moveTo(this.points[0][0], this.points[0][1]);
+                            for (let i = 1; i < this.points.length; i++) { ctx.lineTo(this.points[i][0], this.points[i][1]); }
+                            ctx.closePath();
+                            if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fill(); }
+                            else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.stroke(); }
+                        }
+                    };
+                 }
+                case 'round_rect': {
+                     return {
+                        ...baseElement, radius: options.radius ?? 5, fill: options.fill ?? false,
+                        draw: function(ctx) {
+                            if (!this.visible) return;
+                            const drawX = this.x ?? baseElement.x; const drawY = this.y ?? baseElement.y;
+                            const drawW = this.width ?? baseElement.width; const drawH = this.height ?? baseElement.height;
+                             if (this.fill) { ctx.fillStyle = PIXEL_COLOR; ctx.fillRect(drawX, drawY, drawW, drawH); }
+                             else { ctx.strokeStyle = PIXEL_COLOR; ctx.lineWidth = 1; ctx.strokeRect(drawX, drawY, drawW, drawH); }
+                            ctx.fillStyle = 'rgba(150, 150, 150, 0.8)'; ctx.font = '6px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                            ctx.fillText(`RR (r=${this.radius})`, drawX + drawW / 2, drawY + drawH / 2);
+                        }
+                     };
+                 }
+                case 'icon': {
+                    const iconName = options.iconName || Object.keys(presetIcons)[0];
+                    const iconData = presetIcons[iconName];
+                    if (!iconData) { console.error(`Icon not found: ${iconName}`); return { ...baseElement, type: 'unknown' }; }
+                    return {
+                        ...baseElement, iconName: iconName, width: iconData.width, height: iconData.height,
+                        draw: function(ctx) {
+                            if (!this.visible) return;
+                            const icon = presetIcons[this.iconName]; if (!icon) return;
+                            ctx.fillStyle = PIXEL_COLOR;
+                            for (let r = 0; r < icon.height; r++) {
+                                for (let c = 0; c < icon.width; c++) {
+                                    const index = r * icon.width + c;
+                                    if (icon.data[index] === 1) {
+                                        ctx.fillRect(Math.round(this.x + c), Math.round(this.y + r), 1, 1);
+                                    }
+                                }
+                            }
+                        }
+                    };
+                 }
+                default:
+                    console.warn("Unknown element type requested:", type);
+                    return { ...baseElement, type: 'unknown' };
+            }
+        }
+
+        // --- Helper Functions ---
+        function calculateBoundingBox(points) { /* ... (same) ... */ }
+        function parsePointsString(pointsStr) { /* ... (same) ... */ }
+        function formatPointsString(pointsArr) { /* ... (same) ... */ }
+        function populateIconSelector(selectElement) { /* ... (same) ... */ }
+        // Deep copy helper for history states
+        function deepCopyElements(elementsArray) {
+            // Simple JSON stringify/parse for deep copy (works for current structure)
+             try {
+                 return JSON.parse(JSON.stringify(elementsArray));
+             } catch (e) {
+                 console.error("Deep copy failed:", e);
+                 return []; // Return empty array on failure
+             }
+        }
+
+
+        // --- History Management ---
+        function saveState() {
+            // Clear redo stack
+            history = history.slice(0, historyIndex + 1);
+            // Push deep copy of current state
+            history.push(deepCopyElements(elements));
+            historyIndex++;
+            // Limit history size (e.g., 50 steps)
+            if (history.length > 50) {
+                history.shift(); // Remove oldest state
+                historyIndex--;
+            }
+            updateUndoRedoButtons();
+        }
+
+        function undo() {
+            if (historyIndex > 0) {
+                historyIndex--;
+                elements = deepCopyElements(history[historyIndex]); // Load previous state
+                deselectElement(); // Deselect after undo/redo
+                redrawAll();
+                updateUndoRedoButtons();
+                generateMicroPythonCode();
+            }
+        }
+
+        function redo() {
+            if (historyIndex < history.length - 1) {
+                historyIndex++;
+                elements = deepCopyElements(history[historyIndex]); // Load next state
+                deselectElement();
+                redrawAll();
+                updateUndoRedoButtons();
+                generateMicroPythonCode();
+            }
+        }
+
+        function updateUndoRedoButtons() {
+            undoBtn.disabled = historyIndex <= 0;
+            redoBtn.disabled = historyIndex >= history.length - 1;
+        }
+
+        // --- Save/Load ---
+        function saveDesign() {
+            try {
+                const designData = {
+                    version: 1, // Add a version number for future compatibility
+                    displaySize: `${SCREEN_WIDTH}x${SCREEN_HEIGHT}`,
+                    elements: elements
+                };
+                localStorage.setItem('ssd1306_design', JSON.stringify(designData));
+                alert('Design saved successfully!');
+                // Optionally save state after saving
+                // saveState(); // Decided against this to avoid polluting undo stack
+            } catch (e) {
+                console.error("Error saving design:", e);
+                alert('Error saving design. Local storage might be full or disabled.');
+            }
+        }
+
+        function loadDesign() {
+            try {
+                const savedData = localStorage.getItem('ssd1306_design');
+                if (savedData) {
+                    const designData = JSON.parse(savedData);
+                    // Basic validation/migration if needed based on version
+                    if (designData.version === 1 && Array.isArray(designData.elements)) {
+                        // Set display size
+                        const size = designData.displaySize || '128x64';
+                        displaySizeSelect.value = size; // Set dropdown
+                        setDisplaySize(size); // Apply size change
+
+                        // Load elements (re-create to ensure methods are attached if needed, though current structure is data-only)
+                        // elements = designData.elements.map(elData => createElement(elData.type, elData));
+                        // Simpler load for now as createElement handles options object:
+                        elements = deepCopyElements(designData.elements);
+
+                        deselectElement();
+                        history = [deepCopyElements(elements)]; // Reset history with loaded state
+                        historyIndex = 0;
+                        redrawAll();
+                        updateUndoRedoButtons();
+                        generateMicroPythonCode();
+                        alert('Design loaded successfully!');
+                    } else {
+                         alert('Invalid or incompatible save data found.');
+                    }
+                } else {
+                    alert('No saved design found.');
+                }
+            } catch (e) {
+                console.error("Error loading design:", e);
+                alert('Error loading design. Saved data might be corrupted.');
+            }
+        }
+
+
+        // --- Drawing & Canvas Updates ---
+        function clearCanvas() { /* ... (same) ... */ }
+        function drawGrid() {
+             if (!showGrid) {
+                 gridOverlay.style.display = 'none';
+                 return;
+             }
+             gridOverlay.style.display = 'block';
+             // Update background size based on current zoom and grid size
+             const scaledGridSizeX = GRID_SIZE * CANVAS_SCALE_X * currentZoom;
+             const scaledGridSizeY = GRID_SIZE * CANVAS_SCALE_Y * currentZoom;
+             gridOverlay.style.backgroundSize = `${scaledGridSizeX}px ${scaledGridSizeY}px`;
+        }
+
+        // Draw visual overlays for locked/hidden elements
+        function drawElementOverlays() {
+            elementOverlaysDiv.innerHTML = ''; // Clear previous overlays
+            elements.forEach(el => {
+                 if (!el.visible || el.locked) {
+                    const overlay = document.createElement('div');
+                    overlay.className = 'element-overlay';
+                    overlay.style.left = `${el.x * CANVAS_SCALE_X * currentZoom}px`;
+                    overlay.style.top = `${el.y * CANVAS_SCALE_Y * currentZoom}px`;
+                    overlay.style.width = `${el.width * CANVAS_SCALE_X * currentZoom}px`;
+                    overlay.style.height = `${el.height * CANVAS_SCALE_Y * currentZoom}px`;
+
+                    if (el.locked) {
+                        overlay.classList.add('locked-overlay');
+                        overlay.innerHTML = '<i class="fas fa-lock"></i>'; // Show lock icon
+                    }
+                    if (!el.visible) {
+                         overlay.classList.add('hidden-overlay');
+                         if (!el.locked) { // Don't show eye if already showing lock
+                            overlay.innerHTML = '<i class="fas fa-eye-slash"></i>';
+                         }
+                    }
+                    elementOverlaysDiv.appendChild(overlay);
+                 }
+            });
+        }
+
+        function redrawCanvas() {
+             clearCanvas();
+             // Draw elements in order (respecting layers)
+             elements.forEach(element => {
+                 // Skip drawing hidden elements
+                 if (element && typeof element.draw === 'function' && element.visible) {
+                     ctx.save();
+                     element.draw(ctx);
+                     ctx.restore();
+                 } else if (element && !element.visible) {
+                     // Optionally draw a placeholder for hidden elements? No, keep it clean.
+                 } else if(element) {
+                     console.error("Invalid element found:", element);
+                 }
+             });
+             updateSelectionBox(); // Update selection box based on potentially changed element bounds
+             drawElementOverlays(); // Draw locked/hidden indicators
+        }
+
+        // Full redraw including canvas size/scale updates
+        function redrawAll() {
+            updateCanvasSizeAndScale();
+            drawGrid();
+            redrawCanvas();
+        }
+
+
+        // --- Selection & Manipulation ---
+        function getElementAtPosition(canvasX, canvasY) {
+             // Iterate backwards to select topmost visible & unlocked element
+             for (let i = elements.length - 1; i >= 0; i--) {
+                const el = elements[i];
+                if (!el || !el.visible || el.locked) continue; // Skip hidden or locked
+                const buffer = 3;
+                const x1 = el.x - buffer; const y1 = el.y - buffer;
+                const x2 = el.x + el.width + buffer; const y2 = el.y + el.height + buffer;
+                if (canvasX >= x1 && canvasX <= x2 && canvasY >= y1 && canvasY <= y2) { return el; }
+            }
+            return null;
+        }
+        function updateSelectionBox() { /* ... (same, but respects zoom) ... */
+             if (selectedElement && selectedElement.visible) { // Only show for visible elements
+                selectionBox.style.display = 'block';
+                const scaledX = selectedElement.x * CANVAS_SCALE_X * currentZoom;
+                const scaledY = selectedElement.y * CANVAS_SCALE_Y * currentZoom;
+                const scaledWidth = selectedElement.width * CANVAS_SCALE_X * currentZoom;
+                const scaledHeight = selectedElement.height * CANVAS_SCALE_Y * currentZoom;
+                selectionOutline.style.left = `${scaledX}px`; selectionOutline.style.top = `${scaledY}px`;
+                selectionOutline.style.width = `${scaledWidth}px`; selectionOutline.style.height = `${scaledHeight}px`;
+                const showHandles = ['rectangle', 'text', 'round_rect'].includes(selectedElement.type);
+                resizeHandles.forEach(h => h.style.display = showHandles ? 'block' : 'none');
+            } else {
+                selectionBox.style.display = 'none';
+            }
+        }
+        function updatePropertiesPanel() { /* ... (includes lock/visible icons) ... */
+             const lockIcon = document.getElementById('prop-locked-toggle');
+             const visibleIcon = document.getElementById('prop-visible-toggle');
+
+             if (!selectedElement) {
+                propertiesPanel.classList.add('hidden');
+                // Disable layer buttons etc.
+                copyBtn.disabled = true;
+                deleteBtn.disabled = true;
+                bringForwardBtn.disabled = true; sendBackwardBtn.disabled = true;
+                bringFrontBtn.disabled = true; sendBackBtn.disabled = true;
+                return;
+            }
+            propertiesPanel.classList.remove('hidden');
+            document.querySelectorAll('.shape-properties').forEach(el => el.classList.add('hidden'));
+
+            const sectionId = `${selectedElement.type}-properties`;
+            const section = document.getElementById(sectionId);
+            const animationSection = document.getElementById('animation-properties');
+
+             // Update Lock/Visible Icons
+             lockIcon.classList.toggle('active', selectedElement.locked);
+             lockIcon.classList.toggle('fa-lock', selectedElement.locked);
+             lockIcon.classList.toggle('fa-lock-open', !selectedElement.locked);
+             visibleIcon.classList.toggle('active', selectedElement.visible);
+             visibleIcon.classList.toggle('fa-eye', selectedElement.visible);
+             visibleIcon.classList.toggle('fa-eye-slash', !selectedElement.visible);
+
+            if (section) { /* ... (populate inputs - same as before) ... */
+                section.classList.remove('hidden');
+                section.querySelectorAll('.prop-input').forEach(input => {
+                    const propName = input.dataset.prop;
+                    if (propName && selectedElement.hasOwnProperty(propName)) {
+                        if (input.tagName === 'SELECT' && propName === 'iconName') { populateIconSelector(input); input.value = selectedElement[propName]; }
+                        else if (input.type === 'checkbox') { input.checked = selectedElement[propName]; }
+                        else if (propName === 'points') { input.value = formatPointsString(selectedElement[propName]); }
+                        else { input.value = selectedElement[propName]; }
+                    }
+                });
+             } else if (selectedElement.type !== 'unknown') { console.warn(`Properties section not found: ${selectedElement.type}`); }
+
+            if (animationSection && selectedElement.type !== 'unknown') { /* ... (populate animation inputs - same) ... */
+                 animationSection.classList.remove('hidden');
+                 animationSection.querySelectorAll('.prop-input').forEach(input => {
+                     const propName = input.dataset.prop;
+                     if (propName === 'toggleAnimate') { input.textContent = selectedElement.isAnimating ? 'Stop Animation' : 'Start Animation'; }
+                     else if (propName && selectedElement.hasOwnProperty(propName)) { input.value = selectedElement[propName] === null ? '' : selectedElement[propName]; }
+                 });
+             } else if (animationSection) { animationSection.classList.add('hidden'); }
+
+             // Enable/disable buttons based on selection
+             copyBtn.disabled = false;
+             deleteBtn.disabled = false;
+             const index = elements.findIndex(el => el.id === selectedElement.id);
+             bringForwardBtn.disabled = index >= elements.length - 1;
+             sendBackwardBtn.disabled = index <= 0;
+             bringFrontBtn.disabled = index >= elements.length - 1;
+             sendBackBtn.disabled = index <= 0;
+        }
+        function selectElement(element) { /* ... (same) ... */ }
+        function deselectElement() { /* ... (same) ... */ }
+        function deleteSelectedElement() {
+            if (selectedElement && !selectedElement.locked) { // Check lock
+                const index = elements.findIndex(el => el.id === selectedElement.id);
+                 if(selectedElement.isAnimating) stopAnimation(selectedElement);
+                elements.splice(index, 1); // Remove from array
+                deselectElement();
+                redrawAll(); // Use redrawAll to handle overlays
+                saveState(); // Save history
+                generateMicroPythonCode();
+            }
+        }
+        function updateElementBounds(element) { /* ... (same) ... */ }
+
+
+        // --- Event Handlers ---
+        function getCanvasCoordinates(event) {
+             // Adjust coordinates based on zoom and container offset
+             const rect = canvasContainer.getBoundingClientRect(); // Use container rect
+             let clientX, clientY;
+             if (event.touches && event.touches.length > 0) { clientX = event.touches[0].clientX; clientY = event.touches[0].clientY; }
+             else if (event.changedTouches && event.changedTouches.length > 0) { clientX = event.changedTouches[0].clientX; clientY = event.changedTouches[0].clientY; }
+             else { clientX = event.clientX; clientY = event.clientY; }
+
+             // Coordinates relative to the scaled+zoomed container
+             const containerX = clientX - rect.left;
+             const containerY = clientY - rect.top;
+
+             // Convert to original 0-SCREEN_WIDTH/HEIGHT range
+             const canvasX = Math.floor(containerX / (CANVAS_SCALE_X * currentZoom));
+             const canvasY = Math.floor(containerY / (CANVAS_SCALE_Y * currentZoom));
+
+             const clampedX = Math.max(0, Math.min(SCREEN_WIDTH - 1, canvasX));
+             const clampedY = Math.max(0, Math.min(SCREEN_HEIGHT - 1, canvasY));
+             return { x: clampedX, y: clampedY };
+        }
+        canvasContainer.addEventListener('mousemove', (event) => { /* ... (coord display update - uses updated getCanvasCoordinates) ... */ });
+        canvasContainer.addEventListener('mouseleave', () => { /* ... (same) ... */ });
+
+        // Snap coordinates to grid
+        function snapToGridValue(value) {
+            if (!snapToGrid) return Math.round(value);
+            return Math.round(value / GRID_SIZE) * GRID_SIZE;
+        }
+
+        function handleMouseDown(event) {
+            // Prevent interaction if target is not the canvas itself (e.g., selection box handles)
+             if (event.target !== canvas && !event.target.classList.contains('resize-handle')) {
+                 // Allow clicks on overlays if needed, but maybe prevent drag start
+                 // return;
+             }
+
+             event.preventDefault();
+             const { x, y } = getCanvasCoordinates(event);
+
+             // Check resize handles first
+             const canResize = selectedElement && selectedElement.visible && !selectedElement.locked && ['rectangle', 'text', 'round_rect'].includes(selectedElement.type);
+             if (canResize && event.target.classList.contains('resize-handle')) {
+                  isResizing = true; isDragging = false;
+                  resizeHandleType = event.target.classList.contains('tl') ? 'tl' : event.target.classList.contains('tr') ? 'tr' : event.target.classList.contains('bl') ? 'bl' : 'br';
+                  dragStartX = x; dragStartY = y; // Use un-snapped coords for delta calculation
+                  selectedElement.originalRect = { x: selectedElement.x, y: selectedElement.y, width: selectedElement.width, height: selectedElement.height };
+                  canvasContainer.style.cursor = event.target.style.cursor; return;
+             }
+
+             // Check element selection (only visible and unlocked)
+             const clickedElement = getElementAtPosition(x, y); // Already checks visible/locked
+             if (clickedElement) {
+                 selectElement(clickedElement); isDragging = true;
+                 dragStartX = x; dragStartY = y; // Use un-snapped start coords
+                 // Store initial state for delta calculations during drag
+                 selectedElement.dragInitialState = deepCopyElements([selectedElement])[0]; // Deep copy initial state
+                 canvasContainer.style.cursor = 'move';
+             } else {
+                 deselectElement(); isDragging = false; canvasContainer.style.cursor = 'default';
+             }
+             isResizing = false;
+        }
+
+        function handleMouseMove(event) {
+            if (!isDragging && !isResizing) return;
+            event.preventDefault();
+            let { x, y } = getCanvasCoordinates(event); // Get current mouse position in canvas space
+
+            // --- Dragging Logic ---
+            if (isDragging && selectedElement) {
+                 const initialState = selectedElement.dragInitialState;
+                 if (!initialState) return;
+
+                 // Calculate raw delta from the actual drag start position
+                 const rawDx = x - dragStartX;
+                 const rawDy = y - dragStartY;
+
+                 // Calculate new top-left corner (or center for some shapes) based on raw delta
+                 let potentialNewX = initialState.x + rawDx;
+                 let potentialNewY = initialState.y + rawDy;
+
+                 // Apply Snapping to the potential new position
+                 if (snapToGrid) {
+                     potentialNewX = snapToGridValue(potentialNewX);
+                     potentialNewY = snapToGridValue(potentialNewY);
+                 } else {
+                      potentialNewX = Math.round(potentialNewX);
+                      potentialNewY = Math.round(potentialNewY);
+                 }
+
+                 // Calculate the *actual* snapped delta
+                 const snappedDx = potentialNewX - initialState.x;
+                 const snappedDy = potentialNewY - initialState.y;
+
+                 // Update element properties based on the *snapped* delta
+                 switch (selectedElement.type) {
+                    case 'rectangle': case 'text': case 'round_rect': case 'icon':
+                        selectedElement.x = initialState.x + snappedDx;
+                        selectedElement.y = initialState.y + snappedDy;
+                        break;
+                    case 'circle': case 'ellipse':
+                        // Snap center position
+                        const potentialCx = initialState.cx + rawDx;
+                        const potentialCy = initialState.cy + rawDy;
+                        selectedElement.cx = snapToGrid ? snapToGridValue(potentialCx) : Math.round(potentialCx);
+                        selectedElement.cy = snapToGrid ? snapToGridValue(potentialCy) : Math.round(potentialCy);
+                        break;
+                    case 'line':
+                        // Snap both points individually if desired, or just the start point?
+                        // Let's snap the whole line based on start point delta for now.
+                        selectedElement.x = initialState.x + snappedDx; // x1
+                        selectedElement.y = initialState.y + snappedDy; // y1
+                        selectedElement.x2 = initialState.x2 + snappedDx;
+                        selectedElement.y2 = initialState.y2 + snappedDy;
+                        break;
+                    case 'triangle':
+                        // Snap all points based on delta from initial state
+                        selectedElement.x0 = initialState.x0 + snappedDx; selectedElement.y0 = initialState.y0 + snappedDy;
+                        selectedElement.x1 = initialState.x1 + snappedDx; selectedElement.y1 = initialState.y1 + snappedDy;
+                        selectedElement.x2 = initialState.x2 + snappedDx; selectedElement.y2 = initialState.y2 + snappedDy;
+                        break;
+                    case 'polygon':
+                        if (initialState.points) {
+                            selectedElement.points = initialState.points.map(p => [p[0] + snappedDx, p[1] + snappedDy]);
+                        }
+                        break;
+                 }
+                 updateElementBounds(selectedElement); updatePropertiesPanel(); updateSelectionBox(); redrawCanvas();
+            }
+            // --- Resizing Logic ---
+            else if (isResizing && selectedElement) {
+                 const orig = selectedElement.originalRect; if (!orig) return;
+
+                 // Calculate potential new bounds based on raw mouse delta
+                 let potentialX = orig.x, potentialY = orig.y, potentialW = orig.width, potentialH = orig.height;
+                 const rawDx = x - dragStartX;
+                 const rawDy = y - dragStartY;
+
+                 switch (resizeHandleType) {
+                     case 'br': potentialW = orig.width + rawDx; potentialH = orig.height + rawDy; break;
+                     case 'bl': potentialX = orig.x + rawDx; potentialW = orig.width - rawDx; potentialH = orig.height + rawDy; break;
+                     case 'tr': potentialY = orig.y + rawDy; potentialW = orig.width + rawDx; potentialH = orig.height - rawDy; break;
+                     case 'tl': potentialX = orig.x + rawDx; potentialY = orig.y + rawDy; potentialW = orig.width - rawDx; potentialH = orig.height - rawDy; break;
+                 }
+
+                 // Apply snapping to the corner being dragged
+                 let finalX = potentialX, finalY = potentialY, finalW = potentialW, finalH = potentialH;
+                 if (snapToGrid) {
+                     switch (resizeHandleType) {
+                         case 'br':
+                             finalW = snapToGridValue(potentialX + potentialW) - finalX;
+                             finalH = snapToGridValue(potentialY + potentialH) - finalY;
+                             break;
+                         case 'bl':
+                             finalX = snapToGridValue(potentialX);
+                             finalW = (orig.x + orig.width) - finalX; // Calculate width based on fixed right edge
+                             finalH = snapToGridValue(potentialY + potentialH) - finalY;
+                             break;
+                         case 'tr':
+                             finalW = snapToGridValue(potentialX + potentialW) - finalX;
+                             finalY = snapToGridValue(potentialY);
+                             finalH = (orig.y + orig.height) - finalY; // Calculate height based on fixed bottom edge
+                             break;
+                         case 'tl':
+                             finalX = snapToGridValue(potentialX);
+                             finalY = snapToGridValue(potentialY);
+                             finalW = (orig.x + orig.width) - finalX;
+                             finalH = (orig.y + orig.height) - finalY;
+                             break;
+                     }
+                 }
+
+                 // Round final values if not snapping
+                 if (!snapToGrid) {
+                     finalX = Math.round(finalX); finalY = Math.round(finalY);
+                     finalW = Math.round(finalW); finalH = Math.round(finalH);
+                 }
+
+
+                 if (finalW >= 1 && finalH >= 1) {
+                     selectedElement.x = finalX; selectedElement.y = finalY;
+                     selectedElement.width = finalW; selectedElement.height = finalH;
+                     updatePropertiesPanel(); updateSelectionBox(); redrawCanvas();
+                 }
+            }
+        }
+        function handleMouseUp(event) {
+            if (isDragging || isResizing) {
+                event.preventDefault?.();
+                // Save state *after* drag/resize is complete
+                saveState();
+                generateMicroPythonCode(); // Generate code after final position is set
+            }
+            if (isResizing && selectedElement) delete selectedElement.originalRect;
+            if (isDragging && selectedElement) delete selectedElement.dragInitialState;
+            isDragging = false; isResizing = false; resizeHandleType = null;
+            canvasContainer.style.cursor = selectedElement ? (selectedElement.locked ? 'not-allowed' : 'move') : 'default';
+        }
+
+        // --- Property Panel Updates ---
+        function handlePropertyChange(event) {
+             if (!selectedElement || selectedElement.locked) return; // Ignore if locked
+
+            const input = event.target;
+            const propName = input.dataset.prop;
+            if (!propName) return;
+
+            // Handle lock/visible toggles separately
+            if (propName === 'toggleVisible') {
+                selectedElement.visible = !selectedElement.visible;
+                updatePropertiesPanel(); // Update icon state
+                redrawAll(); // Update canvas overlay
+                saveState(); // Save visibility change
+                generateMicroPythonCode(); // Update code (might comment out element)
+                return;
+            }
+             if (propName === 'toggleLocked') {
+                selectedElement.locked = !selectedElement.locked;
+                updatePropertiesPanel(); // Update icon state
+                redrawAll(); // Update canvas overlay
+                saveState(); // Save lock change
+                // No need to regenerate code for lock change
+                return;
+            }
+             if (propName === 'toggleAnimate') { /* ... (same) ... */ }
+
+            // --- Standard property changes ---
+            let value;
+            // ... (value parsing logic - same as before) ...
+             if (input.type === 'checkbox') { value = input.checked; }
+            else if (input.type === 'number') {
+                value = input.value === '' ? null : parseInt(input.value, 10);
+                if (value !== null && isNaN(value)) { value = 0; }
+                if ((propName === 'r' || propName === 'rx' || propName === 'ry') && value !== null && value < 1) value = 1;
+                if (propName === 'radius' && value !== null && value < 0) value = 0;
+                if ((propName === 'width' || propName === 'height') && value !== null && value < 1 && ['rectangle', 'text', 'round_rect'].includes(selectedElement.type)) value = 1;
+                if (propName === 'animSpeed' && value !== null && value < 0.1) value = 0.1;
+            } else if (propName === 'points') {
+                 value = parsePointsString(input.value);
+                 if (!Array.isArray(value)) { input.value = formatPointsString(selectedElement[propName]); return; }
+            } else if (propName === 'iconName') {
+                 value = input.value;
+                 const iconData = presetIcons[value];
+                 if(iconData) { selectedElement.width = iconData.width; selectedElement.height = iconData.height; }
+            } else { value = input.value; }
+
+
+            if (selectedElement.hasOwnProperty(propName)) { selectedElement[propName] = value; }
+            else { console.warn(`Property ${propName} not found on selected element type ${selectedElement.type}.`); return; }
+
+            updateElementBounds(selectedElement);
+            redrawAll(); // Use redrawAll for overlays
+            saveState(); // Save property change
+            generateMicroPythonCode();
+        }
+
+        // --- Button Click Handlers ---
+        addElementBtn.addEventListener('click', () => { /* ... (calls saveState) ... */
+            const type = addElementTypeSelect.value;
+            if (type === 'text') {
+                modalTextInput.value = 'Text'; textModal.style.display = 'block'; modalTextInput.focus(); modalTextInput.select();
+            } else {
+                const newElement = createElement(type);
+                if (newElement) {
+                    elements.push(newElement); selectElement(newElement); redrawAll(); saveState(); generateMicroPythonCode();
+                }
+            }
+        });
+        modalConfirmBtn.addEventListener('click', () => { /* ... (calls saveState) ... */
+            const text = modalTextInput.value || 'Text';
+            const newTextElement = createElement('text', { text: text });
+            if (newTextElement) { elements.push(newTextElement); selectElement(newTextElement); redrawAll(); saveState(); generateMicroPythonCode(); }
+            textModal.style.display = 'none';
+        });
+        closeModalBtn.addEventListener('click', () => { textModal.style.display = 'none'; });
+        window.addEventListener('click', (event) => { if (event.target == textModal) { textModal.style.display = 'none'; } });
+        deleteBtn.addEventListener('click', deleteSelectedElement); // Already saves state
+        saveBtn.addEventListener('click', saveDesign);
+        loadBtn.addEventListener('click', loadDesign);
+        undoBtn.addEventListener('click', undo);
+        redoBtn.addEventListener('click', redo);
+
+        // --- Layer Controls ---
+        function moveElement(direction) {
+            if (!selectedElement) return;
+            const index = elements.findIndex(el => el.id === selectedElement.id);
+            if (index === -1) return;
+
+            let newIndex = index;
+            switch (direction) {
+                case 'forward': newIndex = Math.min(elements.length - 1, index + 1); break;
+                case 'backward': newIndex = Math.max(0, index - 1); break;
+                case 'front': newIndex = elements.length - 1; break;
+                case 'back': newIndex = 0; break;
+            }
+
+            if (newIndex !== index) {
+                // Remove element and insert at new position
+                const [movedElement] = elements.splice(index, 1);
+                elements.splice(newIndex, 0, movedElement);
+                redrawAll();
+                saveState();
+                generateMicroPythonCode();
+                updatePropertiesPanel(); // Update button disabled states
+            }
+        }
+        bringForwardBtn.addEventListener('click', () => moveElement('forward'));
+        sendBackwardBtn.addEventListener('click', () => moveElement('backward'));
+        bringFrontBtn.addEventListener('click', () => moveElement('front'));
+        sendBackBtn.addEventListener('click', () => moveElement('back'));
+
+        // --- Copy / Paste ---
+        function copyElement() {
+            if (selectedElement) {
+                copiedElementData = deepCopyElements([selectedElement])[0];
+                pasteBtn.disabled = false; // Enable paste button
+                 console.log("Copied:", copiedElementData);
+            }
+        }
+        function pasteElement() {
+            if (copiedElementData) {
+                // Create a new element based on copied data, but with new ID and offset position
+                const pasteOptions = {
+                    ...copiedElementData, // Spread existing properties
+                    id: Date.now() + Math.random(), // New unique ID
+                    x: (copiedElementData.x || 0) + 5, // Offset x
+                    y: (copiedElementData.y || 0) + 5, // Offset y
+                    locked: false, // Pasted element is not locked initially
+                    isAnimating: false // Pasted element is not animating initially
+                };
+                 // Adjust center coordinates if applicable
+                 if (pasteOptions.hasOwnProperty('cx')) pasteOptions.cx += 5;
+                 if (pasteOptions.hasOwnProperty('cy')) pasteOptions.cy += 5;
+                 // Adjust line/triangle/polygon points
+                 if (pasteOptions.type === 'line') { pasteOptions.x2 += 5; pasteOptions.y2 += 5; }
+                 if (pasteOptions.type === 'triangle') { pasteOptions.x0 += 5; pasteOptions.y0 += 5; pasteOptions.x1 += 5; pasteOptions.y1 += 5; pasteOptions.x2 += 5; pasteOptions.y2 += 5; }
+                 if (pasteOptions.type === 'polygon' && Array.isArray(pasteOptions.points)) { pasteOptions.points = pasteOptions.points.map(p => [p[0]+5, p[1]+5]); }
+
+
+                const newElement = createElement(pasteOptions.type, pasteOptions);
+                if (newElement) {
+                    elements.push(newElement);
+                    selectElement(newElement);
+                    redrawAll();
+                    saveState();
+                    generateMicroPythonCode();
+                }
+            }
+        }
+        copyBtn.addEventListener('click', copyElement);
+        pasteBtn.addEventListener('click', pasteElement);
+
+        // --- View Controls ---
+        function applyZoom() {
+             canvasContainer.style.transform = `scale(${currentZoom})`;
+             // Adjust outer container size to fit scaled content
+             canvasOuterContainer.style.width = `${SCREEN_WIDTH * CANVAS_SCALE_X * currentZoom}px`;
+             canvasOuterContainer.style.height = `${SCREEN_HEIGHT * CANVAS_SCALE_Y * currentZoom}px`;
+             zoomLevelSpan.textContent = `${Math.round(currentZoom * 100)}%`;
+             // Update grid background size based on zoom
+             drawGrid();
+             // Update selection box and overlays based on zoom
+             updateSelectionBox();
+             drawElementOverlays();
+        }
+        zoomInBtn.addEventListener('click', () => { currentZoom = Math.min(4, currentZoom + 0.25); applyZoom(); });
+        zoomOutBtn.addEventListener('click', () => { currentZoom = Math.max(0.25, currentZoom - 0.25); applyZoom(); });
+
+        gridToggle.addEventListener('change', (e) => { showGrid = e.target.checked; canvasContainer.classList.toggle('show-grid', showGrid); drawGrid(); });
+        snapToggle.addEventListener('change', (e) => { snapToGrid = e.target.checked; });
+
+        function setDisplaySize(sizeValue) {
+            const dimensions = sizeValue.split('x');
+            SCREEN_WIDTH = parseInt(dimensions[0], 10);
+            SCREEN_HEIGHT = parseInt(dimensions[1], 10);
+            // Update canvas element size
+            canvas.width = SCREEN_WIDTH;
+            canvas.height = SCREEN_HEIGHT;
+            // Update CSS variables for grid scaling (if needed, though base scale might be sufficient)
+            // document.documentElement.style.setProperty('--canvas-scale-x', CANVAS_SCALE_X);
+            // document.documentElement.style.setProperty('--canvas-scale-y', CANVAS_SCALE_Y);
+            // Redraw everything with new dimensions
+            redrawAll();
+            applyZoom(); // Reapply zoom to new size
+            generateMicroPythonCode(); // Update code defaults
+        }
+        displaySizeSelect.addEventListener('change', (e) => setDisplaySize(e.target.value));
+
+        // --- Animation Control ---
+        function startAnimation(element) { /* ... (same) ... */ }
+        function stopAnimation(element) { /* ... (same) ... */ }
+        function toggleAnimation(element) { /* ... (same) ... */ }
+        function playAnimationLoop() { /* ... (same, updates button state) ... */
+             if (isPlaying) return; isPlaying = true;
+             playBtn.classList.add('bg-gray-400', 'hover:bg-gray-400'); playBtn.disabled = true; playBtn.innerHTML = '<i class="fas fa-play mr-1"></i>Play';
+             pauseBtn.classList.remove('bg-gray-400', 'hover:bg-gray-400'); pauseBtn.disabled = false; pauseBtn.innerHTML = '<i class="fas fa-pause mr-1"></i>Pause';
+             function loop() { if (!isPlaying) return; animateStep(); animationFrameId = requestAnimationFrame(loop); } loop();
+        }
+        function pauseAnimationLoop() { /* ... (same, updates button state) ... */
+             isPlaying = false; if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
+             playBtn.classList.remove('bg-gray-400', 'hover:bg-gray-400'); playBtn.disabled = false; playBtn.innerHTML = '<i class="fas fa-play mr-1"></i>Play';
+             pauseBtn.classList.add('bg-gray-400', 'hover:bg-gray-400'); pauseBtn.disabled = true; pauseBtn.innerHTML = '<i class="fas fa-pause mr-1"></i>Pause';
+             updatePropertiesPanel(); // Update individual element buttons
+        }
+        function animateStep() { /* ... (same) ... */ }
+        function updateElementCoordsFromPos(element, dx, dy) { /* ... (same) ... */ }
+        playBtn.addEventListener('click', playAnimationLoop);
+        pauseBtn.addEventListener('click', pauseAnimationLoop);
+
+        // --- Keyboard Shortcuts ---
+        document.addEventListener('keydown', (e) => {
+            // Ignore shortcuts if focus is inside an input/textarea
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+                return;
+            }
+
+            const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+            const ctrlCmd = isMac ? e.metaKey : e.ctrlKey;
+
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectedElement && !deleteBtn.disabled) {
+                    e.preventDefault(); deleteSelectedElement();
+                }
+            } else if (ctrlCmd && e.key.toLowerCase() === 'c') {
+                 if (selectedElement && !copyBtn.disabled) { e.preventDefault(); copyElement(); }
+            } else if (ctrlCmd && e.key.toLowerCase() === 'v') {
+                 if (!pasteBtn.disabled) { e.preventDefault(); pasteElement(); }
+            } else if (ctrlCmd && e.key.toLowerCase() === 'z') {
+                 if (!undoBtn.disabled) { e.preventDefault(); undo(); }
+            } else if (ctrlCmd && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+                 if (!redoBtn.disabled) { e.preventDefault(); redo(); }
+            } else if (ctrlCmd && e.key.toLowerCase() === 's') {
+                 e.preventDefault(); saveDesign();
+            } else if (ctrlCmd && e.key.toLowerCase() === 'o') {
+                 e.preventDefault(); loadDesign(); // Might be blocked by browser
+            } else if (e.key.toLowerCase() === 'p') {
+                 e.preventDefault();
+                 if (isPlaying) pauseAnimationLoop(); else playAnimationLoop();
+            }
+            // Add shortcuts for layering? Maybe Alt + Up/Down?
+        });
+
+        // --- Code Generation ---
+        function generateMicroPythonCode() {
+             let iconDefs = ''; let iconVars = new Set();
+             let drawingCommands = '';
+
+             // Filter out hidden elements before generating commands
+             const visibleElements = elements.filter(el => el && el.visible);
+
+             visibleElements.forEach(el => {
+                const color = el.color ?? 1; const fill = el.fill ?? false;
+                try {
+                    switch (el.type) {
+                        // ... (Cases for rect, line, text, circle, triangle, ellipse, polygon, round_rect - same as before, ensure Math.round) ...
+                        case 'rectangle': drawingCommands += fill ? `display.fill_rect(${Math.round(el.x)}, ${Math.round(el.y)}, ${Math.round(el.width)}, ${Math.round(el.height)}, ${color})\n` : `display.rect(${Math.round(el.x)}, ${Math.round(el.y)}, ${Math.round(el.width)}, ${Math.round(el.height)}, ${color})\n`; break;
+                        case 'line': drawingCommands += `display.line(${Math.round(el.x)}, ${Math.round(el.y)}, ${Math.round(el.x2)}, ${Math.round(el.y2)}, ${color})\n`; break;
+                        case 'text': const escapedText = (el.text || '').replace(/"/g, '\\"'); drawingCommands += `display.text("${escapedText}", ${Math.round(el.x)}, ${Math.round(el.y)}, ${color})\n`; break;
+                        case 'circle': drawingCommands += `display.circle(${Math.round(el.cx)}, ${Math.round(el.cy)}, ${Math.round(el.r)}, ${color}, fill=${fill})\n`; break;
+                        case 'triangle': drawingCommands += `display.triangle(${Math.round(el.x0)}, ${Math.round(el.y0)}, ${Math.round(el.x1)}, ${Math.round(el.y1)}, ${Math.round(el.x2)}, ${Math.round(el.y2)}, ${color}, fill=${fill})\n`; break;
+                        case 'ellipse': drawingCommands += `display.ellipse(${Math.round(el.cx)}, ${Math.round(el.cy)}, ${Math.round(el.rx)}, ${Math.round(el.ry)}, ${color}, fill=${fill})\n`; break;
+                        case 'polygon': const pointsListStr = el.points.map(p => `(${Math.round(p[0])},${Math.round(p[1])})`).join(', '); drawingCommands += `display.polygon([${pointsListStr}], ${color}, fill=${fill})\n`; break;
+                        case 'round_rect': drawingCommands += `display.round_rect(${Math.round(el.x)}, ${Math.round(el.y)}, ${Math.round(el.width)}, ${Math.round(el.height)}, ${color}, filled=${fill}, radius=${Math.round(el.radius)})\n`; break;
+                        case 'icon':
+                            const icon = presetIcons[el.iconName];
+                            if (icon) {
+                                const varName = `icon_${el.iconName}`;
+                                if (!iconVars.has(varName)) {
+                                    // Generate bytearray definition (MONO_VLSB)
+                                    let byteString = 'bytearray(b\''; let byteValue = 0; let bitCount = 0;
+                                    const totalBits = icon.width * icon.height;
+                                    for (let i = 0; i < totalBits; i++) {
+                                        // Calculate byte index and bit position within the byte for VLSB
+                                        const byteIndex = Math.floor(i / 8);
+                                        const bitInByteIndex = i % 8;
+                                        // Calculate corresponding index in the flat data array (row-major)
+                                        const dataIndex = Math.floor(i / icon.width) * icon.width + (i % icon.width);
+
+                                        if (icon.data[dataIndex] === 1) {
+                                             byteValue |= (1 << bitInByteIndex);
+                                        }
+                                        bitCount++;
+                                        if (bitCount === 8 || i === totalBits - 1) { // End of byte or end of data
+                                            byteString += `\\x${byteValue.toString(16).padStart(2, '0')}`;
+                                            byteValue = 0; bitCount = 0;
+                                        }
+                                    }
+                                    byteString += '\')';
+                                    iconDefs += `\n# Icon: ${el.iconName}\n`;
+                                    iconDefs += `${varName}_data = ${byteString}\n`;
+                                    iconDefs += `${varName}_fb = framebuf.FrameBuffer(${varName}_data, ${icon.width}, ${icon.height}, framebuf.MONO_VLSB)\n`;
+                                    iconVars.add(varName);
+                                }
+                                drawingCommands += `display.blit(${varName}_fb, ${Math.round(el.x)}, ${Math.round(el.y)})\n`;
+                            } else { drawingCommands += `# ERROR: Icon data not found for '${el.iconName}'\n`; }
+                            break;
+                        default: drawingCommands += `# Skipping unsupported element type: ${el.type}\n`;
+                    }
+                } catch (error) { drawingCommands += `# ERROR generating code for element ID ${el.id}: ${error.message}\n`; console.error("Error generating code for element:", el, error); }
+            });
+
+             // Assemble final code
+             let code = `# MicroPython Code for SSD1306 Display (Raspberry Pi Pico)
+# Generated by SSD1306 Simulator
+# Display Size: ${SCREEN_WIDTH}x${SCREEN_HEIGHT}
+# IMPORTANT: ... (setup instructions) ...
+
+import machine
+import time
+import ssd1306
+import framebuf
+
+# --- Display Setup (CHOOSE ONE: I2C or SPI) ---
+display_width = ${SCREEN_WIDTH}
+display_height = ${SCREEN_HEIGHT}
+
+# == I2C Setup ==
+# i2c = machine.I2C(0, sda=machine.Pin(8), scl=machine.Pin(9), freq=400000) # Example
+# display = ssd1306.SSD1306_I2C(display_width, display_height, i2c)
+
+# == SPI Setup ==
+spi = machine.SPI(0, baudrate=10000000, sck=machine.Pin(18), mosi=machine.Pin(19)) # Example
+dc_pin = machine.Pin(16); res_pin = machine.Pin(17); cs_pin = machine.Pin(20) # Example
+display = ssd1306.SSD1306_SPI(display_width, display_height, spi, dc_pin, res_pin, cs_pin)
+
+# --- Icon Definitions (if any) ---
+${iconDefs}
+# --- Drawing Commands ---
+display.fill(0) # Clear display
+${drawingCommands}
+# Update the display
+display.show()
+
+print("Display updated.")
+`;
+            codeOutputArea.value = code;
+        }
+
+        // --- Initialization ---
+        function updateCanvasSizeAndScale() {
+             // Set logical canvas size
+             canvas.width = SCREEN_WIDTH;
+             canvas.height = SCREEN_HEIGHT;
+             // Set display size of canvas element based on base scale (zoom handled by container)
+             canvas.style.width = `${SCREEN_WIDTH * CANVAS_SCALE_X}px`;
+             canvas.style.height = `${SCREEN_HEIGHT * CANVAS_SCALE_Y}px`;
+             // Update container size (zoom applied in applyZoom)
+             canvasOuterContainer.style.width = `${SCREEN_WIDTH * CANVAS_SCALE_X * currentZoom}px`;
+             canvasOuterContainer.style.height = `${SCREEN_HEIGHT * CANVAS_SCALE_Y * currentZoom}px`;
+             // Update grid overlay CSS variable dependency
+             document.documentElement.style.setProperty('--canvas-scale-x', CANVAS_SCALE_X);
+             document.documentElement.style.setProperty('--canvas-scale-y', CANVAS_SCALE_Y);
+        }
+
+        function initialize() {
+            updateCanvasSizeAndScale(); // Set initial size
+            applyZoom(); // Apply initial zoom
+            ctx.imageSmoothingEnabled = false;
+
+            // Event listeners
+            canvasContainer.addEventListener('mousedown', handleMouseDown);
+            // canvasContainer.addEventListener('mousemove', handleMouseMove); // Drag handled separately
+            canvasContainer.addEventListener('mouseup', handleMouseUp);
+            // canvasContainer.addEventListener('mouseleave', handleMouseLeave); // Leave handled separately
+            canvasContainer.addEventListener('touchstart', handleMouseDown, { passive: false });
+            canvasContainer.addEventListener('touchmove', handleMouseMove, { passive: false });
+            canvasContainer.addEventListener('touchend', handleMouseUp, { passive: false });
+            canvasContainer.addEventListener('touchcancel', handleMouseUp, { passive: false });
+
+            // Property panel listeners (delegated)
+            propertiesPanel.addEventListener('change', handlePropertyChange);
+            propertiesPanel.addEventListener('input', (event) => {
+                 if (event.target.classList.contains('prop-input') && (event.target.type === 'number' || event.target.type === 'text' || event.target.type === 'textarea')) { handlePropertyChange(event); }
+            });
+            // Listener for lock/visible icons in header
+            propertiesPanel.addEventListener('click', (event) => {
+                if (event.target.id === 'prop-visible-toggle') handlePropertyChange({ target: { dataset: { prop: 'toggleVisible' } } });
+                if (event.target.id === 'prop-locked-toggle') handlePropertyChange({ target: { dataset: { prop: 'toggleLocked' } } });
+            });
+
+
+            // Initial state
+            history = [deepCopyElements(elements)]; // Start history with empty state
+            historyIndex = 0;
+            updateUndoRedoButtons();
+            pasteBtn.disabled = copiedElementData === null;
+            deselectElement(); // Ensure no initial selection and buttons are disabled
+            redrawAll();
+            generateMicroPythonCode();
+            pauseAnimationLoop();
+        }
+
+        // --- Run Initialization ---
+        initialize();
+
+    </script>
+
+</body>
+</html>
